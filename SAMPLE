@@ -1,0 +1,80 @@
+
+"Resident Evil 3 Nemesis US SLUS00923"
+
+RCJC Pad 1
+700CC7EA ????
+RCJC Pad 2
+700CC80E ????
+AnAc Pad 1
+700CC7E8 ????
+AnAc Pad 2
+700CC80C ????
+
+Skip All FMVs
+80083456 3C00
+**Hyper Mode
+*Default Speed
+(Press L1 Pad 2)
+700CC80E FBFF
+300101BC 0001
+700CC80E FBFF
+800809AE 1040
+*More Speed
+(Press R1 Pad 2)
+700CC80E F7FF
+300101BC 0002
+700CC80E F7FF
+800809AE 1040
+*Much More Speed
+(Press R2 Pad 2)
+700CC80E FDFF
+800809AE 2400
+*Instant Reset
+(Press L1 & Select)
+700CC7EA FBFE
+80024292 3C00
+900CC7EA FBFE
+80024292 1440
+**Walk Thru Walls (alternate)
+*On
+(Press L1 & Up)
+700CC7EA FBEF
+800339BE 2400
+*Off
+(Press L1 & Down)
+700CC7EA FBBF
+800339BE 0C01
+**Walk Thru Enemies
+*On
+(Press L1 & Left)
+700CC7EA FB7F
+80033982 2400
+*Off
+(Press L1 & Right)
+700CC7EA FBDF
+80033982 0C00
+**Freeze Enemies
+*On
+(Press L3 & Up)
+700CC7EA FFED
+80023EAA 2400
+*Off
+(Press L3 & Down)
+700CC7EA FFBD
+80023EAA 0040
+No Ink Ribbons Required For Saving
+80051406 2400
+*Ink Ribbons [Note 1]
+Infinite
+8006CD32 3C00
+Increase
+3006CD2C 0021
+*Ammo All Weapons [Note 1]
+Infinite
+8006D096 2402
+8006D0B6 2402
+Increases
+8006D094 0001
+8006D0B4 0001
+
+Note 1: Use only one of the codes!

@@ -1,0 +1,11 @@
+PROJECT("xpcrypt" C)
+
+CMAKE_MINIMUM_REQUIRED(VERSION 2.4)
+
+SET(CMAKE_C_FLAGS "-O2 -Wall -s")
+
+SET(SRCS xp_crypto.c xpcrypt.c)
+
+ADD_EXECUTABLE(xpcrypt ${SRCS})
+
+INSTALL(TARGETS xpcrypt DESTINATION bin)

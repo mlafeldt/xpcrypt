@@ -1,0 +1,156 @@
+
+
+---==============================---
+   xpcrypt - Xploder PSX Crypto Tool
+   Copyright (C) 2007, 2009 misfire
+---=================================---
+
+
+Welcome to xpcrypt! This program will decrypt and encrypt cheat codes and ROMs
+for Xploder PSX.
+
+
+---============---
+   Version history
+---===============---
+
+v1.1 (May 1 2009)
+* Rewrote most of xpcrypt.
+* Support decryption/encryption of Xploder ROMs.
+* Upgrade to GPL v3.
+* Use CMake as build system.
+* Fix the disclaimer.
+
+v1.0 (Jul 4 2007)
+* Initial public release
+
+
+---==========---
+   About xpcrypt
+---=============---
+
+Even though I cracked the Xploder code encryption many years ago, I never
+released an actual crypto program publicly. (I only put out the reverse-
+engineered crypto routines but nobody used them to develop a program.)
+
+However, here is xpcrypt, a simple console application which allows you to
+decrypt or encrypt Xploder codes for PSX. Feel free to write a more
+sophisticated tool. ;)
+
+
+---==---
+   Build
+---=====---
+
+To compile xpcrypt, you need CMake and a working C compiler like gcc.
+
+I recommend doing an out-of-source build:
+$ mkdir build
+$ cd build
+$ cmake ..
+$ make
+
+To install it:
+# make install
+
+
+---==---
+   Usage
+---=====---
+
+Usage: xpcrypt [options] [input file] [output file]
+
+Options are:
+ -d/--decrypt-codes        decrypt codes (default)
+ -e/--encrypt-codes <key>  encrypt codes with key [4,5,6,7]
+ -r/--decrypt-rom          decrypt ROM
+ -R/--encrypt-rom          encrypt ROM
+ -h/--help                 display this information
+ -v/--version              display the version of xpcrypt
+
+By default, xpcrypt reads codes from stdin, decrypts them, and writes them to
+stdout (-d option). Use the -e option together with an encryption key if you
+want to encrypt codes instead. Valid keys are 4, 5, 6, and 7.
+Make use of redirects to read codes from (<) or write them to text files (>).
+
+Further, you can decrypt (-r) or encrypt (-R) Xploder ROMs. Simply pass the
+respective option plus input and output file to xpcrypt.
+
+
+---====---
+   Samples
+---=======---
+
+Decrypt some codes:
+$ ./xpcrypt
+76621A3E 5450 ; input four encrypted codes
+865895E6 8D5A
+96621A3E 5450
+865895E6 659A
+700CC7EA FBFE ; decrypted codes start here
+80024292 3C00
+900CC7EA FBFE
+80024292 1440
+
+Encrypt a code with key 7:
+$ ./xpcrypt -e 7
+3001F012 00A0
+377EB8E8 15D5
+
+Decrypt codes from text file foo.txt and print them to the screen:
+$ ./xpcrypt < foo.txt
+7008A19E 7FEF
+300342FC 0000
+9008A19E 7FEF
+300342FC 0006
+
+Decrypt codes from foo.txt and write them to bar.txt:
+$ ./xpcrypt < foo.txt > bar.txt
+
+Decrypt ROM foo.bin to bar.bin:
+$ ./xpcrypt -r foo.bin bar.bin
+
+
+---=---
+   TODO
+---====---
+
+- add support for PSX code types 5 (Supercode) and 6 (Megacode)
+- add support for N64 code encryption
+
+
+---=======---
+   Disclaimer
+---==========---
+
+THIS PROGRAM IS NOT LICENSED, ENDORSED, NOR SPONSORED BY SONY COMPUTER
+ENTERTAINMENT, INC. NOR FIRE INTERNATIONAL, LTD.
+ALL TRADEMARKS ARE PROPERTY OF THEIR RESPECTIVE OWNERS.
+
+xpcrypt comes with ABSOLUTELY NO WARRANTY. It is covered by the GNU General
+Public License. Please see file COPYING for further information.
+
+
+---===========---
+   Special thanks
+---==============---
+
+Thanks to Parasyte for his help on the 7K encryption.
+
+Greets to all the people that contribute to our code hacking community!
+
+
+---====---
+   Contact
+---=======---
+
+misfire [AT] xploderfreax [DOT] de
+
+If you enjoy xpcrypt, please consider a PayPal donation to my e-mail address
+above. Thank you.
+
+
+---======================---
+   HACKING NEEDS TO BE FREE!
+---=========================---
+
