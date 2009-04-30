@@ -43,14 +43,12 @@ sophisticated tool. ;)
 ---=====---
 
 To compile xpcrypt, you need CMake and a working C compiler like gcc.
-
 I recommend doing an out-of-source build:
-$ mkdir build
 $ cd build
-$ cmake ..
+$ cmake ../src/
 $ make
 
-To install it:
+To install xpcrypt:
 # make install
 
 
