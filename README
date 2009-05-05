@@ -97,24 +97,13 @@ $ ./xpcrypt -e 7
 
 Decrypt codes from text file foo.txt and print them to the screen:
 $ ./xpcrypt < foo.txt
-7008A19E 7FEF
-300342FC 0000
-9008A19E 7FEF
-300342FC 0006
+...
 
 Decrypt codes from foo.txt and write them to bar.txt:
 $ ./xpcrypt < foo.txt > bar.txt
 
 Decrypt ROM foo.bin to bar.bin:
 $ ./xpcrypt -r foo.bin bar.bin
-
-
----=---
-   TODO
----====---
-
-- add support for PSX code types 5 (Supercode) and 6 (Megacode)
-- add support for N64 code encryption
 
 
 ---=======---

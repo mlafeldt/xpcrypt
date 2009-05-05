@@ -1,0 +1,2 @@
+- add support for PSX code types 5 (Supercode) and 6 (Megacode)
+- add support for N64 code encryption
