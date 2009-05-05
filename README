@@ -14,12 +14,11 @@ for Xploder PSX.
    Version history
 ---===============---
 
-v1.1 (May 1 2009)
+v1.1 (May 6 2009)
 * Rewrote most of xpcrypt.
-* Support decryption/encryption of Xploder ROMs.
-* Upgrade to GPL v3.
+* Add decryption/encryption of Xploder ROMs.
 * Use CMake as build system.
-* Fix the disclaimer.
+* Upgrade to GPL v3.
 
 v1.0 (Jul 4 2007)
 * Initial public release
@@ -30,19 +29,18 @@ v1.0 (Jul 4 2007)
 ---=============---
 
 Even though I cracked the Xploder code encryption many years ago, I never
-released an actual crypto program publicly. (I only put out the reverse-
+released an actual crypto program publicly. (I only put out the reverse
 engineered crypto routines but nobody used them to develop a program.)
 
 However, here is xpcrypt, a simple console application which allows you to
-decrypt or encrypt Xploder codes for PSX. Feel free to write a more
-sophisticated tool. ;)
+decrypt or encrypt Xploder codes and ROMs for PSX.
 
 
 ---==---
    Build
 ---=====---
 
-To compile xpcrypt, you need CMake and a working C compiler like gcc.
+To compile xpcrypt, you need CMake and a C compiler like gcc.
 I recommend doing an out-of-source build:
 $ cd build
 $ cmake ../src/
@@ -67,12 +65,12 @@ Options are:
 
 By default, xpcrypt reads codes from stdin, decrypts them, and writes them to
 stdout (-d option). Use the -e option together with an encryption key if you
-want to encrypt codes instead. Valid keys are 4, 5, 6, and 7.
-Make use of redirects to read codes from (<) or write them to text files (>).
+want to encrypt codes instead; valid keys are 4, 5, 6, and 7. Make use of
+redirects to read codes from (<) or write them to text files (>).
 
-Further, you can decrypt or encrypt Xploder ROMs. Simply pass the -r option plus
-input and output file to xpcrypt. It automatically detects if the ROM needs to be
-decrypted or encrypted.
+Further, you can decrypt or encrypt Xploder ROMs. Simply pass the -r option
+plus input and output file names to xpcrypt. It automatically detects if the ROM
+needs to be decrypted or encrypted.
 
 
 ---====---
@@ -85,7 +83,7 @@ $ ./xpcrypt
 865895E6 8D5A
 96621A3E 5450
 865895E6 659A
-700CC7EA FBFE ; decrypted codes start here
+700CC7EA FBFE ; decrypted output starts here
 80024292 3C00
 900CC7EA FBFE
 80024292 1440
