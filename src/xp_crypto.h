@@ -60,7 +60,7 @@ int xp_decrypt_code(u8 *code, enum xp_key key);
 /**
  * xp_encrypt_rom - Encrypt an Xploder ROM.
  * @rom: buffer holding ROM in raw format
- * @size: size of buffer
+ * @size: size of ROM buffer
  * @return: 0: success, -1: error
  */
 int xp_encrypt_rom(u8 *rom, int size);
@@ -68,9 +68,17 @@ int xp_encrypt_rom(u8 *rom, int size);
 /**
  * xp_decrypt_rom - Decrypt an Xploder ROM.
  * @rom: buffer holding encrypted ROM
- * @size: size of buffer
+ * @size: size of ROM buffer
  * @return: 0: success, -1: error
  */
 int xp_decrypt_rom(u8 *rom, int size);
+
+/**
+ * xp_rom_is_encrypted - Check if an Xploder ROM is encrypted.
+ * @rom: buffer holding ROM
+ * @size: size of ROM buffer
+ * @return: 0: not encrypted, 1: encrypted
+ */
+int xp_rom_is_encrypted(const u8 *rom, int size);
 
 #endif /*_XP_CRYPTO_H_*/

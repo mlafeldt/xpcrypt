@@ -21,6 +21,7 @@
  */
 
 #include <stdlib.h> /* for NULL */
+#include <string.h> /* for strncmp() */
 #include "xp_crypto.h"
 
 /**
@@ -198,14 +199,14 @@ static const u8 seedtable2[XP_ROM_BLKSIZE] = {
 /**
  * xp_encrypt_rom - Encrypt an Xploder ROM.
  * @rom: buffer holding ROM in raw format
- * @size: size of buffer
+ * @size: size of ROM buffer
  * @return: 0: success, -1: error
  */
 int xp_encrypt_rom(u8 *rom, int size)
 {
 	int i;
 
-	if (rom == NULL)
+	if (rom == NULL || size < XP_ROM_BLKSIZE)
 		return -1;
 
 	for (i = 0; i < size; i++)
@@ -217,18 +218,32 @@ int xp_encrypt_rom(u8 *rom, int size)
 /**
  * xp_decrypt_rom - Decrypt an Xploder ROM.
  * @rom: buffer holding encrypted ROM
- * @size: size of buffer
+ * @size: size of ROM buffer
  * @return: 0: success, -1: error
  */
 int xp_decrypt_rom(u8 *rom, int size)
 {
 	int i;
 
-	if (rom == NULL)
+	if (rom == NULL || size < XP_ROM_BLKSIZE)
 		return -1;
 
 	for (i = 0; i < size; i++)
 		rom[i] = (rom[i] ^ seedtable1[i % XP_ROM_BLKSIZE]) + seedtable2[i % XP_ROM_BLKSIZE];
 
 	return 0;
+}
+
+/**
+ * xp_rom_is_encrypted - Check if an Xploder ROM is encrypted.
+ * @rom: buffer holding ROM
+ * @size: size of ROM buffer
+ * @return: 0: not encrypted, 1: encrypted
+ */
+int xp_rom_is_encrypted(const u8 *rom, int size)
+{
+	if (rom == NULL || size < XP_ROM_BLKSIZE)
+		return 0;
+
+	return !strncmp((char*)&rom[0x10], "Sony", 4);
 }

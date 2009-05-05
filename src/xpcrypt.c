@@ -38,8 +38,7 @@
 	"Options are:\n" \
 	" -d/--decrypt-codes        decrypt codes (default)\n" \
 	" -e/--encrypt-codes <key>  encrypt codes with key [4,5,6,7]\n" \
-	" -r/--decrypt-rom          decrypt ROM\n" \
-	" -R/--encrypt-rom          encrypt ROM\n" \
+	" -r/--rom                  decrypt or encrypt ROM\n" \
 	" -h/--help                 display this information\n" \
 	" -v/--version              display the version of "APP_NAME"\n\n" \
 	"Bug reports and suggestions to <misfire@xploderfreax.de>.\n"
@@ -52,12 +51,11 @@
 	"the GNU General Public License.  This program has absolutely no warranty.\n"
 
 /* Short and long options accepted by getopt */
-static const char *shortopts = "de:rRhv";
+static const char *shortopts = "de:rhv";
 static const struct option longopts[] = {
 	{ "decrypt-codes", no_argument, NULL, 'd' },
 	{ "encrypt-codes", required_argument, NULL, 'e' },
-	{ "decrypt-rom", no_argument, NULL, 'r' },
-	{ "encrypt-rom", no_argument, NULL, 'R' },
+	{ "rom", no_argument, NULL, 'r' },
 	{ "help", no_argument, NULL, 'h' },
 	{ "version", no_argument, NULL, 'v' },
 	{ NULL, 0, NULL, 0 }
@@ -67,8 +65,7 @@ static const struct option longopts[] = {
 enum {
 	MODE_DECRYPT_CODES,
 	MODE_ENCRYPT_CODES,
-	MODE_DECRYPT_ROM,
-	MODE_ENCRYPT_ROM
+	MODE_CRYPT_ROM
 };
 
 /*
@@ -116,7 +113,7 @@ static int crypt_codes(int mode, enum xp_key key)
 			continue;
 		}
 
-		/* We have a code -- process it. */
+		/* We have a code - process it. */
 		sscanf(line, "%02hhx%02hhx%02hhx%02hhx %02hhx%02hhx",
 			&code[0], &code[1], &code[2], &code[3],
 			&code[4], &code[5]);
@@ -136,7 +133,7 @@ static int crypt_codes(int mode, enum xp_key key)
 /*
  * Decrypt or encrypt an Xploder ROM.
  */
-static int crypt_rom(int mode, const char *infile, const char *outfile)
+static int crypt_rom(const char *infile, const char *outfile)
 {
 	FILE *fp;
 	u8 *buf;
@@ -156,40 +153,41 @@ static int crypt_rom(int mode, const char *infile, const char *outfile)
 	size = ftell(fp);
 	if (size < XP_ROM_BLKSIZE) {
 		fprintf(stderr, "Error: input file too small\n");
-		goto cleanup;
+		goto out;
 	}
 
 	buf = (u8*)malloc(size);
 	if (buf == NULL) {
 		fprintf(stderr, "Error: memory allocation failed\n");
-		goto cleanup;
+		goto out;
 	}
 
 	fseek(fp, 0, SEEK_SET);
 	if (fread(buf, size, 1, fp) != 1) {
 		fprintf(stderr, "Error: could not read from input file\n");
-		goto cleanup;
+		goto out;
 	}
 
 	fclose(fp);
 	fp = fopen(outfile, "w");
 	if (fp == NULL) {
 		fprintf(stderr, "Error: could not open output file %s\n", outfile);
-		goto cleanup;
+		goto out;
 	}
 
-	if (mode == MODE_DECRYPT_ROM)
+	/* Check if ROM needs to be decrypted or encrypted. */
+	if (xp_rom_is_encrypted(buf, size))
 		xp_decrypt_rom(buf, size);
 	else
 		xp_encrypt_rom(buf, size);
 
 	if (fwrite(buf, size, 1, fp) != 1) {
 		fprintf(stderr, "Error: could not write to output file\n");
-		goto cleanup;
+		goto out;
 	}
 
 	ret = 0;
-cleanup:
+out:
 	if (buf != NULL)
 		free(buf);
 	if (fp != NULL)
@@ -221,10 +219,7 @@ int main(int argc, char *argv[])
 			mode = MODE_ENCRYPT_CODES;
 			break;
 		case 'r':
-			mode = MODE_DECRYPT_ROM;
-			break;
-		case 'R':
-			mode = MODE_ENCRYPT_ROM;
+			mode = MODE_CRYPT_ROM;
 			break;
 		case 'h':
 			printf(HELP_TEXT);
@@ -245,7 +240,7 @@ int main(int argc, char *argv[])
 			fprintf(stderr, "Error: input/output file missing\n");
 			return EXIT_FAILURE;
 		}
-		if (crypt_rom(mode, argv[optind], argv[optind + 1]))
+		if (crypt_rom(argv[optind], argv[optind + 1]))
 			return EXIT_FAILURE;
 	}
 
