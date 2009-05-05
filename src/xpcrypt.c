@@ -208,11 +208,7 @@ int main(int argc, char *argv[])
 			/* default option */
 			break;
 		case 'e':
-			if (sscanf(optarg, "%i", &key) != 1) {
-				fprintf(stderr, "Error: invalid encryption key - must be 4, 5, 6, or 7!\n");
-				return EXIT_FAILURE;
-			}
-			if (!((key >= 4) && (key <= 7))) {
+			if (sscanf(optarg, "%i", &key) != 1 || !(key >= 4 && key <= 7)) {
 				fprintf(stderr, "Error: invalid encryption key - must be 4, 5, 6, or 7!\n");
 				return EXIT_FAILURE;
 			}
@@ -233,15 +229,19 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	if (mode == MODE_DECRYPT_CODES || mode == MODE_ENCRYPT_CODES) {
+	switch (mode) {
+	case MODE_DECRYPT_CODES:
+	case MODE_ENCRYPT_CODES:
 		crypt_codes(mode, key);
-	} else {
+		break;
+	case MODE_CRYPT_ROM:
 		if ((optind + 2) > argc) {
 			fprintf(stderr, "Error: input/output file missing\n");
 			return EXIT_FAILURE;
 		}
 		if (crypt_rom(argv[optind], argv[optind + 1]))
 			return EXIT_FAILURE;
+		break;
 	}
 
 	return EXIT_SUCCESS;
