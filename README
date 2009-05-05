@@ -56,23 +56,23 @@ To install xpcrypt:
    Usage
 ---=====---
 
-Usage: xpcrypt [options] [input file] [output file]
+Usage: xpcrypt [options] [input ROM] [output ROM]
 
 Options are:
  -d/--decrypt-codes        decrypt codes (default)
  -e/--encrypt-codes <key>  encrypt codes with key [4,5,6,7]
- -r/--decrypt-rom          decrypt ROM
- -R/--encrypt-rom          encrypt ROM
+ -r/--rom                  decrypt or encrypt ROM
  -h/--help                 display this information
- -v/--version              display the version of xpcrypt
+ -V/--version              display the version of xpcrypt
 
 By default, xpcrypt reads codes from stdin, decrypts them, and writes them to
 stdout (-d option). Use the -e option together with an encryption key if you
 want to encrypt codes instead. Valid keys are 4, 5, 6, and 7.
 Make use of redirects to read codes from (<) or write them to text files (>).
 
-Further, you can decrypt (-r) or encrypt (-R) Xploder ROMs. Simply pass the
-respective option plus input and output file to xpcrypt.
+Further, you can decrypt or encrypt Xploder ROMs. Simply pass the -r option plus
+input and output file to xpcrypt. It automatically detects if the ROM needs to be
+decrypted or encrypted.
 
 
 ---====---
@@ -102,8 +102,8 @@ $ ./xpcrypt < foo.txt
 Decrypt codes from foo.txt and write them to bar.txt:
 $ ./xpcrypt < foo.txt > bar.txt
 
-Decrypt ROM foo.bin to bar.bin:
-$ ./xpcrypt -r foo.bin bar.bin
+Decrypt encrypted ROM foo.rom to bar.rom:
+$ ./xpcrypt -r foo.rom bar.rom
 
 
 ---=======---

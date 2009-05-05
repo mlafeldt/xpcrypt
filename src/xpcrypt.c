@@ -33,14 +33,14 @@
 
 /* Text displayed for -h option */
 #define HELP_TEXT \
-	"Usage: "APP_NAME" [options] [input file] [output file]\n" \
+	"Usage: "APP_NAME" [options] [input ROM] [output ROM]\n" \
 	"Program to decrypt and encrypt Xploder PSX codes and ROMs\n" \
 	"Options are:\n" \
 	" -d/--decrypt-codes        decrypt codes (default)\n" \
 	" -e/--encrypt-codes <key>  encrypt codes with key [4,5,6,7]\n" \
 	" -r/--rom                  decrypt or encrypt ROM\n" \
 	" -h/--help                 display this information\n" \
-	" -v/--version              display the version of "APP_NAME"\n\n" \
+	" -V/--version              display the version of "APP_NAME"\n\n" \
 	"Bug reports and suggestions to <misfire@xploderfreax.de>.\n"
 
 /* Text displayed for -v option */
@@ -51,13 +51,13 @@
 	"the GNU General Public License.  This program has absolutely no warranty.\n"
 
 /* Short and long options accepted by getopt */
-static const char *shortopts = "de:rhv";
+static const char *shortopts = "de:rhV";
 static const struct option longopts[] = {
 	{ "decrypt-codes", no_argument, NULL, 'd' },
 	{ "encrypt-codes", required_argument, NULL, 'e' },
 	{ "rom", no_argument, NULL, 'r' },
 	{ "help", no_argument, NULL, 'h' },
-	{ "version", no_argument, NULL, 'v' },
+	{ "version", no_argument, NULL, 'V' },
 	{ NULL, 0, NULL, 0 }
 };
 
@@ -220,7 +220,7 @@ int main(int argc, char *argv[])
 		case 'h':
 			printf(HELP_TEXT);
 			return EXIT_SUCCESS;
-		case 'v':
+		case 'V':
 			printf(VERSION_TEXT);
 			return EXIT_SUCCESS;
 		default:
