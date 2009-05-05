@@ -21,7 +21,6 @@
  */
 
 #include <stdlib.h> /* for NULL */
-#include <string.h> /* for strncmp() */
 #include "xp_crypto.h"
 
 /**
@@ -238,12 +237,18 @@ int xp_decrypt_rom(u8 *rom, int size)
  * xp_rom_is_encrypted - Check if an Xploder ROM is encrypted.
  * @rom: buffer holding ROM
  * @size: size of ROM buffer
- * @return: 0: not encrypted, 1: encrypted
+ * @return: -1: error,
+ *           0: not encrypted,
+ *           1: encrypted,
  */
 int xp_rom_is_encrypted(const u8 *rom, int size)
 {
 	if (rom == NULL || size < XP_ROM_BLKSIZE)
-		return 0;
+		return -1;
 
-	return !strncmp((char*)&rom[0x10], "Sony", 4);
+	/*
+	 * Decrypted ROMs have the string "Licensed by Sony Computer
+	 * Entertainment Inc." in the header. Let's look for "Sony".
+	 */
+	return *(u32*)&rom[0x10] != 0x796e6f53;
 }
