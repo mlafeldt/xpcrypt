@@ -1,2 +1,3 @@
 - add support for PSX code types 5 (Super code) and 6 (Mega code)
 - add support for N64 code encryption
+- extract cheat codes from ROMs
