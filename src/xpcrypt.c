@@ -145,14 +145,14 @@ static int crypt_rom(const char *infile, const char *outfile)
 
 	fp = fopen(infile, "r");
 	if (fp == NULL) {
-		fprintf(stderr, "Error: could not open input file %s\n", infile);
+		fprintf(stderr, "Error: could not open input ROM %s\n", infile);
 		return -1;
 	}
 
 	fseek(fp, 0, SEEK_END);
 	size = ftell(fp);
 	if (size < XP_ROM_BLKSIZE) {
-		fprintf(stderr, "Error: input file too small\n");
+		fprintf(stderr, "Error: input ROM too small\n");
 		goto out;
 	}
 
@@ -164,21 +164,21 @@ static int crypt_rom(const char *infile, const char *outfile)
 
 	fseek(fp, 0, SEEK_SET);
 	if (fread(buf, size, 1, fp) != 1) {
-		fprintf(stderr, "Error: could not read from input file\n");
+		fprintf(stderr, "Error: could not read from input ROM\n");
 		goto out;
 	}
 
 	fclose(fp);
 	fp = fopen(outfile, "w");
 	if (fp == NULL) {
-		fprintf(stderr, "Error: could not open output file %s\n", outfile);
+		fprintf(stderr, "Error: could not open output ROM %s\n", outfile);
 		goto out;
 	}
 
 	xp_crypt_rom(buf, size);
 
 	if (fwrite(buf, size, 1, fp) != 1) {
-		fprintf(stderr, "Error: could not write to output file\n");
+		fprintf(stderr, "Error: could not write to output ROM\n");
 		goto out;
 	}
 
@@ -232,7 +232,7 @@ int main(int argc, char *argv[])
 		break;
 	case MODE_CRYPT_ROM:
 		if ((optind + 2) > argc) {
-			fprintf(stderr, "Error: input/output file missing\n");
+			fprintf(stderr, "Error: input/output ROM missing\n");
 			return EXIT_FAILURE;
 		}
 		if (crypt_rom(argv[optind], argv[optind + 1]))
