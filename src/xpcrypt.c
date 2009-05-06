@@ -69,7 +69,7 @@ enum {
 };
 
 /*
- * Returns 1 if string @s indicates a cheat code.
+ * Returns non-zero if string @s indicates a cheat code.
  */
 static int is_code(const char *s, int digits)
 {
@@ -175,11 +175,7 @@ static int crypt_rom(const char *infile, const char *outfile)
 		goto out;
 	}
 
-	/* Check if ROM needs to be decrypted or encrypted. */
-	if (xp_rom_is_encrypted(buf, size))
-		xp_decrypt_rom(buf, size);
-	else
-		xp_encrypt_rom(buf, size);
+	xp_crypt_rom(buf, size);
 
 	if (fwrite(buf, size, 1, fp) != 1) {
 		fprintf(stderr, "Error: could not write to output file\n");

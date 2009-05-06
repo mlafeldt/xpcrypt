@@ -234,21 +234,23 @@ int xp_decrypt_rom(u8 *rom, int size)
 }
 
 /**
- * xp_rom_is_encrypted - Check if an Xploder ROM is encrypted.
+ * xp_crypt_rom - Automatically decrypt or encrypt an Xploder ROM.
  * @rom: buffer holding ROM
  * @size: size of ROM buffer
- * @return: -1: error,
- *           0: not encrypted,
- *           1: encrypted,
+ * @return: 0: success, -1: error
  */
-int xp_rom_is_encrypted(const u8 *rom, int size)
+int xp_crypt_rom(u8 *rom, int size)
 {
 	if (rom == NULL || size < XP_ROM_BLKSIZE)
 		return -1;
 
 	/*
-	 * Decrypted ROMs have the string "Licensed by Sony Computer
-	 * Entertainment Inc." in the header. Let's look for "Sony".
+	 * Check if ROM needs to be decrypted or encrypted. Decrypted ROMs have
+	 * the string "Licensed by Sony Computer Entertainment Inc." in the
+	 * header. Let's look for "Sony".
 	 */
-	return *(u32*)&rom[0x10] != 0x796e6f53;
+	if (*(u32*)&rom[0x10] != 0x796e6f53)
+		return xp_decrypt_rom(rom, size);
+	else
+		return xp_encrypt_rom(rom, size);
 }

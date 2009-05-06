@@ -74,13 +74,11 @@ int xp_encrypt_rom(u8 *rom, int size);
 int xp_decrypt_rom(u8 *rom, int size);
 
 /**
- * xp_rom_is_encrypted - Check if an Xploder ROM is encrypted.
+ * xp_crypt_rom - Automatically decrypt or encrypt an Xploder ROM.
  * @rom: buffer holding ROM
  * @size: size of ROM buffer
- * @return: -1: error,
- *           0: not encrypted,
- *           1: encrypted,
+ * @return: 0: success, -1: error
  */
-int xp_rom_is_encrypted(const u8 *rom, int size);
+int xp_crypt_rom(u8 *rom, int size);
 
 #endif /*_XP_CRYPTO_H_*/
