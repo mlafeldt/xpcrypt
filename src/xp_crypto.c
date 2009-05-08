@@ -254,3 +254,91 @@ int xp_crypt_rom(u8 *rom, int size)
 	else
 		return xp_encrypt_rom(rom, size);
 }
+
+#if 0
+#include <stdio.h>
+#include <string.h>
+
+/* Number of ROM bytes required to crack a single byte */
+#define BF_BYTES 256
+
+/**
+ * xp_bf_rom - Brute force encryption seeds of Xploder ROMs.
+ * @encrom: buffer holding encrypted ROM
+ * @decrom: buffer holding decrypted ROM
+ * @size: size of ROM buffers
+ * @return: 0: success, -1: error
+ */
+int xp_bf_rom(const u8 *encrom, const u8 *decrom, int size)
+{
+	u8 dec[BF_BYTES], enc[BF_BYTES], try[BF_BYTES];
+	u8 seeds[2][XP_ROM_BLKSIZE];
+	u8 b;
+	int a, i, j, found;
+	FILE *fp;
+
+	if (encrom == NULL || decrom == NULL)
+		return -1;
+
+	if (size < (BF_BYTES * XP_ROM_BLKSIZE)) {
+		fprintf(stderr, "Error: ROM size too small for brute force attack\n");
+		return -1;
+	}
+
+	/* Start brute force attack on all block bytes. */
+	for (i = 0; i < XP_ROM_BLKSIZE; i++) {
+		found = 0;
+
+		/* Build tables for each block byte. */
+		for (j = 0; j < BF_BYTES; j++) {
+			enc[j] = encrom[XP_ROM_BLKSIZE * j + i];
+			dec[j] = decrom[XP_ROM_BLKSIZE * j + i];
+		}
+
+		/* Systematically try every possible seed value. */
+		for (a = 0; a <= 0xFF; a++) {
+			/* Calculate seed b from seed a. */
+			b = dec[0] - (enc[0] ^ (u8)a);
+
+			/*
+			 * Decrypt all bytes with candidate seeds and compare
+			 * result to bytes from decrypted ROM. If they match, we
+			 * got the right seeds.
+			 */
+			for (j = 0; j < BF_BYTES; j++)
+				try[j] = (enc[j] ^ (u8)a) + b;
+
+			if (!memcmp(try, dec, BF_BYTES)) {
+				found = 1;
+				seeds[0][i] = (u8)a;
+				seeds[1][i] = b;
+				break;
+			}
+		}
+
+		if (!found) {
+			fprintf(stderr, "Error: brute force failed at offset 0x%02x\n", i);
+			return -1;
+		}
+	}
+
+	/* Write seeds to files. */
+	fp = fopen("seeds1.bin", "w");
+	if (fp == NULL) {
+		fprintf(stderr, "Error: could not create file seeds1.bin\n");
+		return -1;
+	}
+	fwrite(seeds[0], XP_ROM_BLKSIZE, 1, fp);
+	fclose(fp);
+
+	fp = fopen("seeds2.bin", "w");
+	if (fp == NULL) {
+		fprintf(stderr, "Error: could not create file seeds2.bin\n");
+		return -1;
+	}
+	fwrite(seeds[1], XP_ROM_BLKSIZE, 1, fp);
+	fclose(fp);
+
+	return 0;
+}
+#endif
