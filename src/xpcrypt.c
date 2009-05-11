@@ -31,7 +31,7 @@
 #define APP_NAME	"xpcrypt"
 #define APP_VERSION	"1.1"
 
-/* Text displayed for -h option */
+/* Text displayed for --help option */
 #define HELP_TEXT \
 	"Usage: "APP_NAME" [options] [input ROM] [output ROM]\n" \
 	"Program to decrypt and encrypt Xploder PSX codes and ROMs\n" \
@@ -43,7 +43,7 @@
 	" -V/--version              display the version of "APP_NAME"\n\n" \
 	"Bug reports and suggestions to <misfire@xploderfreax.de>.\n"
 
-/* Text displayed for -v option */
+/* Text displayed for --version option */
 #define VERSION_TEXT \
 	APP_NAME" version "APP_VERSION"\n" \
 	"Copyright (C) 2007, 2009 misfire <misfire@xploderfreax.de>\n" \
