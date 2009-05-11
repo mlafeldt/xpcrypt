@@ -23,13 +23,14 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <getopt.h>
 #include "mytypes.h"
 #include "xp_crypto.h"
 
 /* Application's name and current version */
 #define APP_NAME	"xpcrypt"
-#define APP_VERSION	"1.1"
+#define APP_VERSION	"1.2"
 
 /* Text displayed for --help option */
 #define HELP_TEXT \
@@ -51,10 +52,11 @@
 	"the GNU General Public License.  This program has absolutely no warranty.\n"
 
 /* Short and long options accepted by getopt */
-static const char *shortopts = "de:rhV";
+static const char *shortopts = "de:rhVx";
 static const struct option longopts[] = {
 	{ "decrypt-codes", no_argument, NULL, 'd' },
 	{ "encrypt-codes", required_argument, NULL, 'e' },
+	{ "extract-codes", no_argument, NULL, 'x' },
 	{ "rom", no_argument, NULL, 'r' },
 	{ "help", no_argument, NULL, 'h' },
 	{ "version", no_argument, NULL, 'V' },
@@ -65,6 +67,7 @@ static const struct option longopts[] = {
 enum {
 	MODE_DECRYPT_CODES,
 	MODE_ENCRYPT_CODES,
+	MODE_EXTRACT_CODES,
 	MODE_CRYPT_ROM
 };
 
@@ -192,6 +195,91 @@ out:
 	return ret;
 }
 
+static char *shorts[] = {
+	NULL,
+	"Infinite",
+	"Unlimited",
+	" Lives",
+	"Player",
+	" Energy",
+	" Time",
+	"Money"
+};
+
+static int extract_codes(const char *infile)
+{
+	FILE *fp;
+	u8 *buf, *p;
+	long size;
+	int ret = -1;
+	u8 numdesc, numcodes;
+
+	if (infile == NULL)
+		return -1;
+
+	fp = fopen(infile, "r");
+	if (fp == NULL) {
+		fprintf(stderr, "Error: could not open input ROM %s\n", infile);
+		return -1;
+	}
+
+	fseek(fp, 0, SEEK_END);
+	size = ftell(fp);
+	if (size < XP_ROM_BLKSIZE) {
+		fprintf(stderr, "Error: input ROM too small\n");
+		goto out;
+	}
+
+	buf = (u8*)malloc(size);
+	if (buf == NULL) {
+		fprintf(stderr, "Error: memory allocation failed\n");
+		goto out;
+	}
+
+	fseek(fp, 0, SEEK_SET);
+	if (fread(buf, size, 1, fp) != 1) {
+		fprintf(stderr, "Error: could not read from input ROM\n");
+		goto out;
+	}
+
+//	xp_crypt_rom(buf, size);
+
+	p = buf;
+	while (*p != 0xff) {
+		printf("\n//-----\n\n");
+		printf("\"%s\"\n", p);
+		p += strlen((char*)p) + 1;
+		numdesc = *p++;
+		while (numdesc--) {
+			while (*p != '\0') {
+				if (*p < 8)
+					printf("%s", shorts[*p]);
+				else
+					putchar(*p);
+				p++;
+			}
+			printf("\n");
+			numcodes = *(++p);
+			p++;
+			while (numcodes--) {
+				//xp_decrypt_code(p, XP_KEY_AUTO);
+				printf("$%02X%02X%02X%02X %02X%02X\n", p[0], p[1],
+					p[2], p[3], p[4], p[5]);
+				p += 6;
+			}
+		}
+	}
+
+	ret = 0;
+out:
+	if (buf != NULL)
+		free(buf);
+	if (fp != NULL)
+		fclose(fp);
+
+	return ret;
+}
+
 int main(int argc, char *argv[])
 {
 	int mode = MODE_DECRYPT_CODES;
@@ -219,6 +307,9 @@ int main(int argc, char *argv[])
 		case 'V':
 			printf(VERSION_TEXT);
 			return EXIT_SUCCESS;
+		case 'x':
+			mode = MODE_EXTRACT_CODES;
+			break;
 		default:
 			/* getopt_long() already printed an error message */
 			return EXIT_FAILURE;
@@ -229,6 +320,14 @@ int main(int argc, char *argv[])
 	case MODE_DECRYPT_CODES:
 	case MODE_ENCRYPT_CODES:
 		crypt_codes(mode, key);
+		break;
+	case MODE_EXTRACT_CODES:
+		if ((optind + 1) > argc) {
+			fprintf(stderr, "Error: input ROM missing\n");
+			return EXIT_FAILURE;
+		}
+		if (extract_codes(argv[optind]))
+			return EXIT_FAILURE;
 		break;
 	case MODE_CRYPT_ROM:
 		if ((optind + 2) > argc) {
