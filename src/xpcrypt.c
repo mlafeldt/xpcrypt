@@ -246,12 +246,14 @@ static int extract_codes(const char *infile)
 
 	p = buf;
 	while (*p != 0xff) {
-		printf("\n//-----\n\n");
+		/* Print game name */
 		printf("\"%s\"\n", p);
 		p += strlen((char*)p) + 1;
+
+		/* Print code descriptions */
 		numdesc = *p++;
 		while (numdesc--) {
-			while (*p != '\0') {
+			while (*p) {
 				if (*p < 8)
 					printf("%s", shorts[*p]);
 				else
@@ -259,15 +261,19 @@ static int extract_codes(const char *infile)
 				p++;
 			}
 			printf("\n");
-			numcodes = *(++p);
 			p++;
+
+			/* Print codes */
+			numcodes = *p++;
 			while (numcodes--) {
 				//xp_decrypt_code(p, XP_KEY_AUTO);
-				printf("$%02X%02X%02X%02X %02X%02X\n", p[0], p[1],
-					p[2], p[3], p[4], p[5]);
-				p += 6;
+				printf("$%02X%02X%02X%02X %02X%02X\n",
+					p[0], p[1], p[2], p[3], p[4], p[5]);
+				p += XP_CODE_LEN;
 			}
 		}
+
+		printf("\n//=====\n\n");
 	}
 
 	ret = 0;
