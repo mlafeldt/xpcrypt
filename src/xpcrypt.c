@@ -219,14 +219,14 @@ static int extract_codes(const char *infile)
 
 	fp = fopen(infile, "r");
 	if (fp == NULL) {
-		fprintf(stderr, "Error: could not open input ROM %s\n", infile);
+		fprintf(stderr, "Error: could not open ROM %s\n", infile);
 		return -1;
 	}
 
 	fseek(fp, 0, SEEK_END);
 	size = ftell(fp);
 	if (size < XP_ROM_BLKSIZE) {
-		fprintf(stderr, "Error: input ROM too small\n");
+		fprintf(stderr, "Error: ROM too small\n");
 		goto out;
 	}
 
@@ -238,12 +238,16 @@ static int extract_codes(const char *infile)
 
 	fseek(fp, 0, SEEK_SET);
 	if (fread(buf, size, 1, fp) != 1) {
-		fprintf(stderr, "Error: could not read from input ROM\n");
+		fprintf(stderr, "Error: could not read from ROM\n");
 		goto out;
 	}
-
-//	xp_crypt_rom(buf, size);
-
+#if 0
+	/* TODO: find offset of codes */
+	if (xp_decrypt_rom(buf, size)) {
+		fprintf(stderr, "Error: could not decrypt ROM\n");
+		goto out;
+	}
+#endif
 	p = buf;
 	while (*p != 0xff) {
 		/* Print game name */
@@ -267,7 +271,7 @@ static int extract_codes(const char *infile)
 			numcodes = *p++;
 			while (numcodes--) {
 				//xp_decrypt_code(p, XP_KEY_AUTO);
-				printf("$%02X%02X%02X%02X %02X%02X\n",
+				printf("%02X%02X%02X%02X %02X%02X\n",
 					p[0], p[1], p[2], p[3], p[4], p[5]);
 				p += XP_CODE_LEN;
 			}
