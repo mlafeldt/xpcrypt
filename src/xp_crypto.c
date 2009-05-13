@@ -195,6 +195,16 @@ static const u8 seeds2[XP_ROM_BLKSIZE] = {
 	0x9C, 0x9D, 0x9E, 0x9F, 0x98, 0x99, 0x9A, 0x9B, 0x9C, 0x9D, 0x9E, 0x9F, 0x98, 0x99, 0x9A, 0x9B
 };
 
+/* Return non-zero if ROM is decrypted. */
+static int __rom_is_raw(const u8 *rom)
+{
+	/*
+	 * Decrypted ROMs have the string "Licensed by Sony Computer
+	 * Entertainment Inc." in the header. Let's look for "Sony".
+	 */
+	return (*(u32*)&rom[0x10] == 0x796e6f53);
+}
+
 /**
  * xp_encrypt_rom - Encrypt an Xploder ROM.
  * @rom: buffer holding ROM in raw format
@@ -207,6 +217,9 @@ int xp_encrypt_rom(u8 *rom, int size)
 
 	if (rom == NULL || size < XP_ROM_BLKSIZE)
 		return -1;
+
+	if (!__rom_is_raw(rom))
+		return 0; /* already encrypted */
 
 	for (i = 0; i < size; i++)
 		rom[i] = (rom[i] - seeds2[i % XP_ROM_BLKSIZE]) ^ seeds1[i % XP_ROM_BLKSIZE];
@@ -227,6 +240,9 @@ int xp_decrypt_rom(u8 *rom, int size)
 	if (rom == NULL || size < XP_ROM_BLKSIZE)
 		return -1;
 
+	if (__rom_is_raw(rom))
+		return 0; /* already decrypted */
+
 	for (i = 0; i < size; i++)
 		rom[i] = (rom[i] ^ seeds1[i % XP_ROM_BLKSIZE]) + seeds2[i % XP_ROM_BLKSIZE];
 
@@ -244,15 +260,10 @@ int xp_crypt_rom(u8 *rom, int size)
 	if (rom == NULL || size < XP_ROM_BLKSIZE)
 		return -1;
 
-	/*
-	 * Check if ROM needs to be decrypted or encrypted. Decrypted ROMs have
-	 * the string "Licensed by Sony Computer Entertainment Inc." in the
-	 * header. Let's look for "Sony".
-	 */
-	if (*(u32*)&rom[0x10] != 0x796e6f53)
-		return xp_decrypt_rom(rom, size);
-	else
+	if (__rom_is_raw(rom))
 		return xp_encrypt_rom(rom, size);
+	else
+		return xp_decrypt_rom(rom, size);
 }
 
 #if 0
