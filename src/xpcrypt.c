@@ -195,7 +195,9 @@ out:
 	return ret;
 }
 
-static char *shorts[] = {
+/* Abbreviations used in code descriptions */
+#define NUM_ABBR	8
+static const char *g_abbr[NUM_ABBR] = {
 	NULL,
 	"Infinite",
 	"Unlimited",
@@ -206,6 +208,31 @@ static char *shorts[] = {
 	"Money"
 };
 
+static u8 *find_codes(const u8 *rom, int size)
+{
+	const u32 opcodes[] = { 0x8fa20108, 0x8fa80170, 0x00021080, 0x00481021 };
+	int i;
+	u32 *p;
+	u32 off = 0, cnt = 0;
+
+	for (i = 0x100; i < size; i += 4) {
+		if (!memcmp(&rom[i], opcodes, sizeof(opcodes))) {
+			printf("found at %08x\n", i);
+			p = (u32*)&rom[i];
+			off = ((p[10] & 0xff) << 16) | (p[12] & 0xffff);
+			cnt = (p[13] << 16) | (p[15] & 0xffff);
+			printf("offset = %08x\n", off);
+			printf("size   = %08x\n", cnt);
+			printf("end    = %08x\n", off+cnt);
+		}
+	}
+
+	return NULL;
+}
+
+/*
+ * Extract cheat codes from an Xploder ROM.
+ */
 static int extract_codes(const char *infile)
 {
 	FILE *fp;
@@ -241,6 +268,9 @@ static int extract_codes(const char *infile)
 		fprintf(stderr, "Error: could not read from ROM\n");
 		goto out;
 	}
+
+	find_codes(buf, size);
+	return 0;
 #if 0
 	/* TODO: find offset of codes */
 	if (xp_decrypt_rom(buf, size)) {
@@ -258,8 +288,8 @@ static int extract_codes(const char *infile)
 		numdesc = *p++;
 		while (numdesc--) {
 			while (*p) {
-				if (*p < 8)
-					printf("%s", shorts[*p]);
+				if (*p < NUM_ABBR)
+					printf("%s", g_abbr[*p]);
 				else
 					putchar(*p);
 				p++;
@@ -333,7 +363,7 @@ int main(int argc, char *argv[])
 		break;
 	case MODE_EXTRACT_CODES:
 		if ((optind + 1) > argc) {
-			fprintf(stderr, "Error: input ROM missing\n");
+			fprintf(stderr, "Error: ROM missing\n");
 			return EXIT_FAILURE;
 		}
 		if (extract_codes(argv[optind]))

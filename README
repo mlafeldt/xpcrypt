@@ -14,6 +14,9 @@ for Xploder PSX.
    Version history
 ---===============---
 
+v1.2 (May xx 2009)
+* Add ability to extract cheat codes from ROMs.
+
 v1.1 (May 10 2009)
 * Rewrote most of xpcrypt.
 * Add decryption/encryption of Xploder ROMs.
