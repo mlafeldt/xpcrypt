@@ -40,14 +40,18 @@ decrypt or encrypt Xploder codes and ROMs for PSX.
    Build
 ---=====---
 
-To compile xpcrypt, you need CMake and a C compiler like gcc.
-I recommend doing an out-of-source build:
-$ cd build
-$ cmake ../src/
+To build xpcrypt, simply run:
 $ make
 
-To install xpcrypt:
-# make install
+Of course, you can also install it:
+$ make install
+
+CMake is supported too:
+$ mkdir build
+$ cd build/
+$ cmake ..
+$ make
+$ make install
 
 
 ---==---
