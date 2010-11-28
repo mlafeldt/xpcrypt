@@ -136,7 +136,7 @@ static int crypt_codes(int mode, enum xp_key key)
 static int crypt_rom(const char *infile, const char *outfile)
 {
 	FILE *fp;
-	u8 *buf;
+	u8 *buf = NULL;
 	long size;
 	int ret = -1;
 
