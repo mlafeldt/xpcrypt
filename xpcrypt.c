@@ -120,8 +120,11 @@ static int crypt_codes(int mode, enum xp_key key)
 
 		if (mode == MODE_DECRYPT_CODES)
 			xp_decrypt_code(code, key);
-		else
-			xp_encrypt_code(code, key);
+		else if (xp_encrypt_code(code, key))
+			fprintf(stderr, "Warning: the Xploder doesn't "
+				"encrypt code %02X%02X%02X%02X %02X%02X, "
+				"left as it is\n", code[0], code[1],
+				code[2], code[3], code[4], code[5]);
 
 		printf("%02X%02X%02X%02X %02X%02X\n", code[0], code[1],
 			code[2], code[3], code[4], code[5]);

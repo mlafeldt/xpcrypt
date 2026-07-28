@@ -42,6 +42,10 @@ enum xp_key {
  * @code: code to be encrypted
  * @key: encryption key
  * @return: 0: success, -1: error
+ *
+ * A code that uses the lowest three bits of its first byte has no room for a
+ * key, and the Xploder doesn't encrypt the code types 2, A, C, and E at all.
+ * Such a code is left untouched.
  */
 int xp_encrypt_code(u8 *code, enum xp_key key);
 
@@ -50,6 +54,8 @@ int xp_encrypt_code(u8 *code, enum xp_key key);
  * @code: code to be decrypted
  * @key: encryption key, use XP_KEY_AUTO to "guess" the key
  * @return: 0: success, -1: error
+ *
+ * A code of one of the types the Xploder doesn't encrypt is left untouched.
  */
 int xp_decrypt_code(u8 *code, enum xp_key key);
 

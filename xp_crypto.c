@@ -23,6 +23,47 @@
 #include <stdlib.h> /* for NULL */
 #include "xp_crypto.h"
 
+/*
+ * All the magic numbers of the code keys come from the initials of the authors
+ * of the Xploder. The Xploder builds the keys 4 and 7 byte by byte, from a
+ * sliding window that starts out as the string "WHBX" and "FCD!", and adds the
+ * characters of " WB123" for the key 5. The closed forms below are the same
+ * functions: the 0x25 of the key 4, for instance, is
+ *
+ *   'W' + 0x38 + 'H' + ('B' ^ 0x12) + ('X' | 0xEE)
+ *
+ * Note that x | 0xEE is (x & 0x11) + 0xEE, and that (x ^ 0xEF) + 0x76 of the
+ * key 7 is 0xF5 - (x ^ 0x90).
+ */
+
+/*
+ * The Xploder picks the crypto routine of a code from a table of 244 entries,
+ * indexed by the first code byte with the "switched off by default" bit masked
+ * out. That table gives the code types 2, A, C, and E no crypto route: their
+ * entries copy the code verbatim, whatever their key bits say. Which of
+ * the sixteen types carry a key is all that is left of that table once the key
+ * nibble is taken out of it, so here it is as a bit set.
+ */
+#define XP_KEYED_TYPES	0xABFB
+
+/*
+ * Returns non-zero if codes of the type of @code are encrypted at all.
+ */
+static int keyed_type(const u8 *code)
+{
+	return (XP_KEYED_TYPES >> (code[0] >> 4)) & 1;
+}
+
+/*
+ * The keys 0 to 3 are not code keys, so a code that carries one is stored as
+ * it is - with two exceptions. The Xploder gives the first bytes 32 and 82 a
+ * route that adds 'F', 'C' and 'D' to the bytes 1 to 3, and 33 and 83 one that
+ * inverts them. Those four bytes are all there is to it, and they are left
+ * unimplemented on purpose: no database we have seen uses them, the Xploder
+ * has no encrypt side to check a round trip against, and the constants the
+ * reference implementation uses for them are wrong.
+ */
+
 /**
  * xp_encrypt_code - Encrypt an Xploder code.
  * @code: code to be encrypted
@@ -34,7 +75,13 @@ int xp_encrypt_code(u8 *code, enum xp_key key)
 	if (code == NULL)
 		return -1;
 
-	code[0] ^= key;
+	/*
+	 * The key is stored in the lowest three bits of the first code byte. A
+	 * code that uses those bits itself has no room for a key, and a code of
+	 * a type the Xploder never encrypts must not carry one either.
+	 */
+	if (!keyed_type(code) || (code[0] & 0x07))
+		return -1;
 
 	switch (key) {
 	case XP_KEY_4:
@@ -66,8 +113,10 @@ int xp_encrypt_code(u8 *code, enum xp_key key)
 		code[5] += 0x35;
 		break;
 	default:
-		return -1;
+		return -1; /* Leave code untouched */
 	}
+
+	code[0] ^= key;
 
 	return 0;
 }
@@ -83,10 +132,18 @@ int xp_decrypt_code(u8 *code, enum xp_key key)
 	if (code == NULL)
 		return -1;
 
-	if (key == XP_KEY_AUTO)
-		key = code[0] & 0x0F; /* Auto process */
+	/* Codes of a type the Xploder never encrypts are left as they are. */
+	if (!keyed_type(code))
+		return -1;
 
-	code[0] ^= key;
+	/*
+	 * The key is stored in the lowest three bits of the first code byte.
+	 * Bit 3 marks a code that is switched off by default and thus must be
+	 * kept as it is. The Xploder clears the whole nibble instead, which it
+	 * can afford to do because it never has to encrypt the code again.
+	 */
+	if (key == XP_KEY_AUTO)
+		key = code[0] & 0x07; /* Auto process */
 
 	switch (key) {
 	case XP_KEY_4:
@@ -118,8 +175,10 @@ int xp_decrypt_code(u8 *code, enum xp_key key)
 		code[1] += (code[2] & 0x73) - (code[3] ^ 0x90) + 0xF5 + code[4] + code[5];
 		break;
 	default:
-		return -1;
+		return -1; /* Leave code untouched */
 	}
+
+	code[0] ^= key;
 
 	return 0;
 }
