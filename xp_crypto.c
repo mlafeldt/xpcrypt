@@ -475,9 +475,12 @@ int xp_crypt_rom(u8 *rom, int size)
 	/*
 	 * Check if ROM needs to be decrypted or encrypted. Decrypted ROMs have
 	 * the string "Licensed by Sony Computer Entertainment Inc." in the
-	 * header. Let's look for "Sony".
+	 * header. Let's look for "Sony". Compare the bytes rather than a u32:
+	 * @rom points into a buffer we do not own, so it need not be aligned,
+	 * and a word compare would look for the string byte-swapped on a
+	 * big-endian host.
 	 */
-	if (*(u32*)&rom[0x10] != 0x796e6f53)
+	if (memcmp(&rom[0x10], "Sony", 4))
 		return xp_decrypt_rom(rom, size);
 	else
 		return xp_encrypt_rom(rom, size);

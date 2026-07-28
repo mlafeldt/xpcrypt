@@ -21,6 +21,7 @@
  */
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
@@ -79,11 +80,19 @@ static int is_code(const char *s, int digits)
 		return 0;
 
 	while (*s) {
-		if (isxdigit(*s)) {
+		/*
+		 * char may be signed, and the ctype functions are only defined
+		 * for the values of an unsigned char and EOF - handing one of
+		 * them a negative value other than EOF is undefined, whatever
+		 * a particular library happens to do with it.
+		 */
+		unsigned char c = (unsigned char)*s;
+
+		if (isxdigit(c)) {
 			if (++i > digits)
 				return 0;
 		}
-		else if (!isspace(*s)) {
+		else if (!isspace(c)) {
 			return 0;
 		}
 		s++;
@@ -184,12 +193,14 @@ static int crypt_rom(const char *infile, const char *outfile)
 	FILE *fp;
 	u8 *buf = NULL;
 	long size;
+	size_t nbytes;
 	int ret = -1;
 
 	if (infile == NULL || outfile == NULL)
 		return -1;
 
-	fp = fopen(infile, "r");
+	/* "b": a ROM is binary, and Windows would translate line endings. */
+	fp = fopen(infile, "rb");
 	if (fp == NULL) {
 		fprintf(stderr, "Error: could not open input ROM %s\n", infile);
 		return -1;
@@ -201,29 +212,41 @@ static int crypt_rom(const char *infile, const char *outfile)
 		fprintf(stderr, "Error: input ROM too small\n");
 		goto out;
 	}
+	/*
+	 * The crypto takes the size as an int, and the whole ROM has to fit
+	 * into memory anyway, so anything larger is not a ROM we can process.
+	 */
+	if (size > INT_MAX) {
+		fprintf(stderr, "Error: input ROM too large\n");
+		goto out;
+	}
+	nbytes = (size_t)size;
 
-	buf = (u8*)malloc(size);
+	buf = (u8*)malloc(nbytes);
 	if (buf == NULL) {
 		fprintf(stderr, "Error: memory allocation failed\n");
 		goto out;
 	}
 
 	fseek(fp, 0, SEEK_SET);
-	if (fread(buf, size, 1, fp) != 1) {
+	if (fread(buf, nbytes, 1, fp) != 1) {
 		fprintf(stderr, "Error: could not read from input ROM\n");
 		goto out;
 	}
 
 	fclose(fp);
-	fp = fopen(outfile, "w");
+	fp = fopen(outfile, "wb");
 	if (fp == NULL) {
 		fprintf(stderr, "Error: could not open output ROM %s\n", outfile);
 		goto out;
 	}
 
-	xp_crypt_rom(buf, size);
+	if (xp_crypt_rom(buf, (int)size)) {
+		fprintf(stderr, "Error: could not process ROM\n");
+		goto out;
+	}
 
-	if (fwrite(buf, size, 1, fp) != 1) {
+	if (fwrite(buf, nbytes, 1, fp) != 1) {
 		fprintf(stderr, "Error: could not write to output ROM\n");
 		goto out;
 	}
