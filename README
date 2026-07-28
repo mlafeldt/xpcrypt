@@ -86,6 +86,33 @@ plus input and output file names to xpcrypt. It automatically detects if the
 ROM needs to be decrypted or encrypted.
 
 
+---=================---
+   Supercode/Megacode
+---====================---
+
+The code types 5 (Supercode) and 6 (Megacode) don't fit into a single code.
+They consist of a header code plus a number of payload codes which hold raw
+data instead of the usual address/value pair:
+
+  Supercode: 5?aaaaaa Knnn   Megacode: 6?aaaaaK nnnn
+
+n is the number of payload bytes, K the key the payload is encrypted with.
+That key is not one of the normal code keys; xpcrypt knows the keys 6 and 7,
+which are the only ones the Xploder implements. The key 0 means that the
+payload is not encrypted at all, which is the common case in the ROMs that ship
+with the Xplorer/Xploder.
+
+xpcrypt keeps track of those blocks: as soon as it comes across a header, it
+processes the following codes as payload, no matter what they look like. So all
+you have to do is to feed it complete blocks. The payload key is taken from the
+header, which means that a block survives a decrypt/encrypt round trip.
+
+Every code of a payload is treated the same way, including the breakpoint
+descriptor of a Megacode. Payload codes that are stored in the clear are left
+as they are, and so is the payload of a block with an unknown payload key; in
+that case xpcrypt prints a warning.
+
+
 ---====---
    Samples
 ---=======---
@@ -105,6 +132,15 @@ Encrypt a code with key 7:
 $ ./xpcrypt -e 7
 3001F012 00A0
 377EB8E8 15D5
+
+Decrypt a Supercode with 12 payload bytes:
+$ ./xpcrypt
+55A936CF 2ED9 ; input header plus two payload codes
+34FB3457 235D
+34F734F4 FB55
+50007800 600C ; decrypted output starts here
+040008AC 0800
+0800E003 0000
 
 Decrypt codes from text file foo.txt and print them to the screen:
 $ ./xpcrypt < foo.txt
@@ -134,6 +170,9 @@ Public License. Please see file COPYING for further information.
 ---==============---
 
 Thanks to Parasyte for his help on the 7K encryption.
+
+Thanks to SkillerCMP for working out the code types 5 and 6, see
+https://github.com/SkillerCMP/PSX-Xploder.
 
 Greets to all the people that contribute to our code hacking community!
 

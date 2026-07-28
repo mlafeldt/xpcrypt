@@ -93,12 +93,30 @@ static int is_code(const char *s, int digits)
 }
 
 /*
+ * Set up processing of the payload of a Supercode/Megacode block. Returns the
+ * payload position to start at, or -1 if @code is not a block header.
+ */
+static int start_block(const u8 *code, struct xp_block *blk)
+{
+	if (xp_parse_block(code, blk))
+		return -1;
+
+	if (!blk->known_key)
+		fprintf(stderr, "Warning: unknown payload key %i, payload of "
+			"block left as it is\n", blk->payload_key);
+
+	return 0;
+}
+
+/*
  * Decrypt or encrypt Xploder codes.
  */
 static int crypt_codes(int mode, enum xp_key key)
 {
 	char line[2048] = { 0 };
 	u8 code[XP_CODE_LEN];
+	struct xp_block blk;
+	int index = -1; /* Position in the payload of a Supercode/Megacode */
 
 	/*
 	 * Read codes from stdin, decrypt or encrypt them,
@@ -118,13 +136,38 @@ static int crypt_codes(int mode, enum xp_key key)
 			&code[0], &code[1], &code[2], &code[3],
 			&code[4], &code[5]);
 
-		if (mode == MODE_DECRYPT_CODES)
+		if (index >= 0) {
+			/*
+			 * The code belongs to the payload of a Supercode or
+			 * Megacode. It's data, not a code of its own.
+			 */
+			if (mode == MODE_DECRYPT_CODES)
+				xp_decrypt_block_line(code, &blk, index);
+			else
+				xp_encrypt_block_line(code, &blk, index);
+
+			if (++index >= blk.num_lines)
+				index = -1;
+		} else if (mode == MODE_DECRYPT_CODES) {
 			xp_decrypt_code(code, key);
-		else if (xp_encrypt_code(code, key))
-			fprintf(stderr, "Warning: the Xploder doesn't "
-				"encrypt code %02X%02X%02X%02X %02X%02X, "
-				"left as it is\n", code[0], code[1],
-				code[2], code[3], code[4], code[5]);
+			/*
+			 * The key bits of a header are clear once we have
+			 * decrypted it, and of a header that was never
+			 * encrypted anyway. If they are still set we could not
+			 * decrypt it, so its key and size fields are still
+			 * ciphertext and must not be used to start a block.
+			 */
+			if (!(code[0] & 0x07))
+				index = start_block(code, &blk);
+		} else {
+			/* The header has to be parsed before it's encrypted. */
+			index = start_block(code, &blk);
+			if (xp_encrypt_code(code, key))
+				fprintf(stderr, "Warning: the Xploder doesn't "
+					"encrypt code %02X%02X%02X%02X %02X%02X, "
+					"left as it is\n", code[0], code[1],
+					code[2], code[3], code[4], code[5]);
+		}
 
 		printf("%02X%02X%02X%02X %02X%02X\n", code[0], code[1],
 			code[2], code[3], code[4], code[5]);

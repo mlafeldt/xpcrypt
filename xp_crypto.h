@@ -60,6 +60,53 @@ int xp_encrypt_code(u8 *code, enum xp_key key);
 int xp_decrypt_code(u8 *code, enum xp_key key);
 
 
+/*
+ * Number of bytes the breakpoint descriptor of a Megacode occupies in front of
+ * the payload: 6 bytes of break address/type plus a 4-byte break mask.
+ */
+#define XP_MEGA_DESC_LEN	10
+
+/**
+ * struct xp_block - Layout of a Supercode/Megacode block.
+ * @mega: 0: code type 5 (Supercode), 1: code type 6 (Megacode)
+ * @payload_key: key the payload codes are encrypted with
+ * @known_key: non-zero if xpcrypt is able to process the payload
+ * @num_lines: number of payload codes that follow the header
+ */
+struct xp_block {
+	int mega;
+	int payload_key;
+	int known_key;
+	int num_lines;
+};
+
+/**
+ * xp_parse_block - Get the layout of a Supercode/Megacode block.
+ * @code: decrypted header code of the block
+ * @blk: block layout to be filled in
+ * @return: 0: success, -1: @code is not a block header
+ */
+int xp_parse_block(const u8 *code, struct xp_block *blk);
+
+/**
+ * xp_decrypt_block_line - Decrypt a payload code of a Supercode/Megacode block.
+ * @code: code to be decrypted
+ * @blk: block layout returned by xp_parse_block()
+ * @index: position of the code in the payload, starting at 0
+ * @return: 0: success, -1: error
+ */
+int xp_decrypt_block_line(u8 *code, const struct xp_block *blk, int index);
+
+/**
+ * xp_encrypt_block_line - Encrypt a payload code of a Supercode/Megacode block.
+ * @code: code to be encrypted
+ * @blk: block layout returned by xp_parse_block()
+ * @index: position of the code in the payload, starting at 0
+ * @return: 0: success, -1: error
+ */
+int xp_encrypt_block_line(u8 *code, const struct xp_block *blk, int index);
+
+
 /* Xploder ROMs are encrypted in ECB mode, this is the block size */
 #define XP_ROM_BLKSIZE	512
 
