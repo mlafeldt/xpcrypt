@@ -25,7 +25,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
-#include "mytypes.h"
 #include "xp_crypto.h"
 
 /* Application's name and current version */

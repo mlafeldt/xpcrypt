@@ -23,7 +23,9 @@
 #ifndef _XP_CRYPTO_H_
 #define _XP_CRYPTO_H_
 
-#include "mytypes.h"
+#include <stdint.h>
+
+typedef uint8_t u8;
 
 /* Length of an Xploder code in bytes */
 #define XP_CODE_LEN	6
