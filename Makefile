@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Werror -O2 -s
+CFLAGS = -Wall -Werror -O2
 LIBS =
 prefix = $(HOME)
 
@@ -10,10 +10,10 @@ OBJS += xpcrypt.o
 all: $(PROG)
 
 install: $(PROG)
-	install $(PROG) $(prefix)/bin
+	install -s $(PROG) $(prefix)/bin
 
 $(PROG): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $? $(LIBS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
 $(OBJS): xp_crypto.h
 
