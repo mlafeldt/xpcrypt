@@ -19,3 +19,5 @@ $(OBJS): xp_crypto.h
 
 clean:
 	$(RM) $(PROG) $(OBJS)
+
+.PHONY: all install clean

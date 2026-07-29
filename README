@@ -65,6 +65,11 @@ stdout (-d option). Use the -e option together with an encryption key if you
 want to encrypt codes instead; valid keys are 4, 5, 6, and 7. Make use of
 redirects to read codes from (<) or write them to text files (>).
 
+A code is a line of twelve hex digits, written XXXXXXXX XXXX. Whitespace is a
+separator and nothing else: the six bytes are the twelve digits in the order
+they are written, wherever the spaces fall. Any other line - a comment, a game
+name, a blank line - is passed through untouched.
+
 The key of a code is stored in the lowest three bits of its first byte. Codes
 which use those bits themselves have no room for a key; the Xploder stores such
 codes in the clear, and so does xpcrypt, along with a warning.

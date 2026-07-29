@@ -25,6 +25,29 @@
 #include "xp_crypto.h"
 
 /*
+ * This is a code converter, not an emulator of the cartridge. Every cipher
+ * equation, block layout and ROM transform below is the firmware's own, but
+ * six things are deliberately not what an Xploder does, and a claim that
+ * xpcrypt behaves like the hardware has to leave them out:
+ *
+ *   - the code types 32/82 and 33/83 have firmware crypto routes (Special32
+ *     and Special33), and are copied verbatim here - see below;
+ *   - the "switched off by default" bit survives decryption, so that a code
+ *     round-trips; the cartridge's engine keeps it too and reads at an
+ *     address 0x08000000 away because of it;
+ *   - the payload of a block whose key we cannot process is left alone, where
+ *     the firmware writes a row of zeros;
+ *   - a Supercode or Megacode header declaring no payload is treated as an
+ *     ordinary code, because the line below it is one; the cartridge stages
+ *     the empty block and its engine then runs away;
+ *   - a code type A takes every code that follows to the end of the input,
+ *     because a stream of codes has no cheat-entry boundary in it, where the
+ *     cartridge stops at the end of the cheat;
+ *   - the code engine, the cheat database, the ROM compressor and the
+ *     anti-tamper check are not implemented at all.
+ */
+
+/*
  * All the magic numbers of the code keys come from the initials of the authors
  * of the Xploder. The Xploder builds the keys 4 and 7 byte by byte, from a
  * sliding window that starts out as the string "WHBX" and "FCD!", and adds the

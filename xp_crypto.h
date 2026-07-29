@@ -20,8 +20,8 @@
  * along with xpcrypt.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _XP_CRYPTO_H_
-#define _XP_CRYPTO_H_
+#ifndef XP_CRYPTO_H
+#define XP_CRYPTO_H
 
 #include <stdint.h>
 
@@ -158,4 +158,4 @@ int xp_decrypt_rom(u8 *rom, int size);
  */
 int xp_crypt_rom(u8 *rom, int size);
 
-#endif /*_XP_CRYPTO_H_*/
+#endif /*XP_CRYPTO_H*/

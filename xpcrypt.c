@@ -21,6 +21,7 @@
  */
 
 #include <ctype.h>
+#include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,17 +69,42 @@ enum {
 	MODE_CRYPT_ROM
 };
 
+/* A code is written as XXXXXXXX XXXX - two hex digits per byte. */
+#define XP_CODE_DIGITS	(XP_CODE_LEN * 2)
+
 /*
- * Returns non-zero if string @s indicates a cheat code.
+ * Value of a character that isxdigit() has already accepted.
  */
-static int is_code(const char *s, int digits)
+static u8 hex_digit(char c)
 {
-	int i = 0;
+	if (c >= '0' && c <= '9')
+		return (u8)(c - '0');
+
+	return (u8)(tolower((unsigned char)c) - 'a' + 10);
+}
+
+/*
+ * Parse the @len bytes at @s into the six bytes of a cheat code. Returns
+ * non-zero if they are a code, in which case @code holds it; a line that is
+ * not a code is left for the caller to pass through untouched.
+ *
+ * Whitespace is a separator only: the bytes come from the digits themselves,
+ * in order, so where the spaces fall cannot change them. Reading the digits
+ * left to right in fixed-width pairs instead - the obvious sscanf() - is what
+ * makes that untrue, because each conversion skips whatever whitespace it
+ * starts on. "1 23456789 ABC" has the twelve digits a code needs, and used to
+ * come out as 01234567 89AB with the last one silently dropped.
+ */
+static int parse_code(const char *s, size_t len, u8 *code)
+{
+	char hex[XP_CODE_DIGITS];
+	int digits = 0;
+	int i;
 
 	if (s == NULL)
 		return 0;
 
-	while (*s) {
+	while (len--) {
 		/*
 		 * char may be signed, and the ctype functions are only defined
 		 * for the values of an unsigned char and EOF - handing one of
@@ -88,8 +114,9 @@ static int is_code(const char *s, int digits)
 		unsigned char c = (unsigned char)*s;
 
 		if (isxdigit(c)) {
-			if (++i > digits)
+			if (digits == XP_CODE_DIGITS)
 				return 0;
+			hex[digits++] = (char)c;
 		}
 		else if (!isspace(c)) {
 			return 0;
@@ -97,7 +124,58 @@ static int is_code(const char *s, int digits)
 		s++;
 	}
 
-	return (i == digits);
+	if (digits != XP_CODE_DIGITS)
+		return 0;
+
+	for (i = 0; i < XP_CODE_LEN; i++)
+		code[i] = (u8)((hex_digit(hex[i * 2]) << 4) |
+				hex_digit(hex[i * 2 + 1]));
+
+	return 1;
+}
+
+/*
+ * Read one line of stdin into @buf, at most @size - 1 of its bytes, and store
+ * how many in @len. Returns 1 for a line, 0 for the end of the input, -1 for a
+ * read error. @ends_line says whether the line ended here or is longer than
+ * the buffer and continues into the following calls.
+ *
+ * fgets() cannot tell us that: it hands back a chunk that looks exactly like a
+ * short line, so a comment 2000 characters long whose tail happened to read as
+ * twelve hex digits was decrypted as a code of its own. Nothing that arrives in
+ * pieces is a code, and the pieces have to go out as they came in.
+ *
+ * @len is what the caller works from, rather than the terminator this leaves
+ * behind for safety's sake: a line may contain a NUL byte, and "%s" would drop
+ * the rest of it.
+ */
+static int read_line(char *buf, size_t size, size_t *len, int *ends_line)
+{
+	size_t n = 0;
+	int c;
+
+	while ((c = getc(stdin)) != EOF) {
+		buf[n++] = (char)c;
+		if (c == '\n' || n == size - 1)
+			break;
+	}
+
+	if (ferror(stdin))
+		return -1;
+	if (n == 0)
+		return 0;
+
+	buf[n] = '\0';
+	*len = n;
+	/*
+	 * A line that stopped on the last byte of the buffer may well have been
+	 * about to end anyway, but the only way to find out is to read on. Call
+	 * it unfinished: being passed through when it did not have to be costs
+	 * a code line nothing, and being taken for a code costs it everything.
+	 */
+	*ends_line = buf[n - 1] == '\n' || feof(stdin);
+
+	return 1;
 }
 
 /*
@@ -131,10 +209,14 @@ static int start_block(const u8 *code, struct xp_block *blk)
  */
 static int crypt_codes(int mode, enum xp_key key)
 {
-	char line[2048] = { 0 };
+	char line[2048];
+	size_t len = 0;
 	u8 code[XP_CODE_LEN];
 	struct xp_block blk;
 	int index = -1; /* Position in the payload of a Supercode/Megacode */
+	int begins_line = 1; /* The line before this one ended where it should */
+	int ends_line = 1;
+	int ret;
 
 	/*
 	 * Read codes from stdin, decrypt or encrypt them,
@@ -142,17 +224,18 @@ static int crypt_codes(int mode, enum xp_key key)
 	 */
 	setbuf(stdin, NULL);
 
-	while (fgets(line, sizeof(line), stdin) != NULL) {
+	while ((ret = read_line(line, sizeof(line), &len, &ends_line)) == 1) {
+		/* Only a line we have the whole of can be a code. */
+		int whole_line = begins_line && ends_line;
+
+		begins_line = ends_line;
+
 		/* Simply output the line if it's not a code. */
-		if (!is_code(line, XP_CODE_LEN * 2)) {
-			printf("%s", line);
+		if (!whole_line || !parse_code(line, len, code)) {
+			if (fwrite(line, 1, len, stdout) != len)
+				break;
 			continue;
 		}
-
-		/* We have a code - process it. */
-		sscanf(line, "%02hhx%02hhx%02hhx%02hhx %02hhx%02hhx",
-			&code[0], &code[1], &code[2], &code[3],
-			&code[4], &code[5]);
 
 		if (index >= 0) {
 			/*
@@ -189,8 +272,36 @@ static int crypt_codes(int mode, enum xp_key key)
 					code[2], code[3], code[4], code[5]);
 		}
 
-		printf("%02X%02X%02X%02X %02X%02X\n", code[0], code[1],
-			code[2], code[3], code[4], code[5]);
+		if (printf("%02X%02X%02X%02X %02X%02X\n", code[0], code[1],
+				code[2], code[3], code[4], code[5]) < 0)
+			break;
+	}
+
+	/*
+	 * stdout is buffered, so a write that fails may not fail until the
+	 * flush. That and a read error both lose codes without saying so.
+	 */
+	if (ret < 0) {
+		fprintf(stderr, "Error: could not read from stdin\n");
+		return -1;
+	}
+	if (fflush(stdout) != 0 || ferror(stdout)) {
+		fprintf(stderr, "Error: could not write to stdout\n");
+		return -1;
+	}
+
+	return 0;
+}
+
+/*
+ * Write @text to stdout and make sure it got there. -h and -V are output too:
+ * a redirect that fails loses them just as quietly as it would lose a code.
+ */
+static int print_out(const char *text)
+{
+	if (printf("%s", text) < 0 || fflush(stdout) != 0) {
+		fprintf(stderr, "Error: could not write to stdout\n");
+		return -1;
 	}
 
 	return 0;
@@ -217,8 +328,11 @@ static int crypt_rom(const char *infile, const char *outfile)
 		return -1;
 	}
 
-	fseek(fp, 0, SEEK_END);
-	size = ftell(fp);
+	if (fseek(fp, 0, SEEK_END) != 0 || (size = ftell(fp)) < 0) {
+		fprintf(stderr, "Error: could not get the size of input ROM %s\n",
+			infile);
+		goto out;
+	}
 	if (size < XP_ROM_BLKSIZE) {
 		fprintf(stderr, "Error: input ROM too small\n");
 		goto out;
@@ -239,21 +353,40 @@ static int crypt_rom(const char *infile, const char *outfile)
 		goto out;
 	}
 
-	fseek(fp, 0, SEEK_SET);
+	if (fseek(fp, 0, SEEK_SET) != 0) {
+		fprintf(stderr, "Error: could not seek in input ROM %s\n", infile);
+		goto out;
+	}
 	if (fread(buf, nbytes, 1, fp) != 1) {
 		fprintf(stderr, "Error: could not read from input ROM\n");
 		goto out;
 	}
 
-	fclose(fp);
-	fp = fopen(outfile, "wb");
-	if (fp == NULL) {
-		fprintf(stderr, "Error: could not open output ROM %s\n", outfile);
-		goto out;
-	}
+	/*
+	 * Nothing was written to this one, so a failure here says only that the
+	 * ROM we already hold in memory came off a file that then went wrong.
+	 * Say so and carry on: refusing to write the output would be the worse
+	 * answer, and pretending we never noticed is not one.
+	 */
+	if (fclose(fp) != 0)
+		fprintf(stderr, "Warning: could not close input ROM %s\n", infile);
+	fp = NULL;
 
 	if (xp_crypt_rom(buf, (int)size)) {
 		fprintf(stderr, "Error: could not process ROM\n");
+		goto out;
+	}
+
+	/*
+	 * Only now, with a whole converted ROM in hand, open the output. Doing
+	 * it any earlier means a ROM we turn out not to be able to convert has
+	 * already truncated the file that was there - which is the input itself
+	 * when converting one in place, the way "xpcrypt -r rom.bin rom.bin"
+	 * does.
+	 */
+	fp = fopen(outfile, "wb");
+	if (fp == NULL) {
+		fprintf(stderr, "Error: could not open output ROM %s\n", outfile);
 		goto out;
 	}
 
@@ -262,7 +395,18 @@ static int crypt_rom(const char *infile, const char *outfile)
 		goto out;
 	}
 
-	ret = 0;
+	/*
+	 * The ROM goes out through a buffer, so the write above can still fail
+	 * here, and closing is the last chance to be told about it.
+	 */
+	ret = fclose(fp);
+	fp = NULL;
+	if (ret != 0) {
+		fprintf(stderr, "Error: could not write to output ROM\n");
+		ret = -1;
+		goto out;
+	}
+
 out:
 	if (buf != NULL)
 		free(buf);
@@ -281,24 +425,40 @@ int main(int argc, char *argv[])
 	while ((ret = getopt_long(argc, argv, shortopts, longopts, NULL)) != -1) {
 		switch (ret) {
 		case 'd':
-			/* default option */
+			/* The default, but say so after an earlier -e or -r. */
+			mode = MODE_DECRYPT_CODES;
+			key = XP_KEY_AUTO;
 			break;
-		case 'e':
-			if (sscanf(optarg, "%i", &key) != 1 || !(key >= 4 && key <= 7)) {
+		case 'e': {
+			/*
+			 * strtol() into an int, not sscanf("%i") into the enum:
+			 * the enum is only as wide as its values need, which an
+			 * implementation may make one byte, and %i writes an
+			 * int either way. It also lets us insist that the whole
+			 * argument was a number, so -e 4junk is an error rather
+			 * than a 4.
+			 */
+			char *end;
+			long k;
+
+			errno = 0;
+			k = strtol(optarg, &end, 0);
+			if (end == optarg || *end != '\0' || errno != 0 ||
+					k < XP_KEY_4 || k > XP_KEY_7) {
 				fprintf(stderr, "Error: invalid encryption key - must be 4, 5, 6, or 7!\n");
 				return EXIT_FAILURE;
 			}
+			key = (enum xp_key)k;
 			mode = MODE_ENCRYPT_CODES;
 			break;
+		}
 		case 'r':
 			mode = MODE_CRYPT_ROM;
 			break;
 		case 'h':
-			printf(HELP_TEXT);
-			return EXIT_SUCCESS;
+			return print_out(HELP_TEXT) ? EXIT_FAILURE : EXIT_SUCCESS;
 		case 'V':
-			printf(VERSION_TEXT);
-			return EXIT_SUCCESS;
+			return print_out(VERSION_TEXT) ? EXIT_FAILURE : EXIT_SUCCESS;
 		default:
 			/* getopt_long() already printed an error message */
 			return EXIT_FAILURE;
@@ -308,11 +468,29 @@ int main(int argc, char *argv[])
 	switch (mode) {
 	case MODE_DECRYPT_CODES:
 	case MODE_ENCRYPT_CODES:
-		crypt_codes(mode, key);
+		/*
+		 * Codes come in on stdin, so there is nothing an operand could
+		 * mean. Taking one and ignoring it turns "xpcrypt foo.txt" into
+		 * a program that sits waiting on the terminal.
+		 */
+		if (optind < argc) {
+			fprintf(stderr, "Error: unexpected argument %s - codes "
+				"are read from stdin, use < to read a file\n",
+				argv[optind]);
+			return EXIT_FAILURE;
+		}
+		if (crypt_codes(mode, key))
+			return EXIT_FAILURE;
 		break;
 	case MODE_CRYPT_ROM:
 		if ((optind + 2) > argc) {
 			fprintf(stderr, "Error: input/output ROM missing\n");
+			return EXIT_FAILURE;
+		}
+		if ((optind + 2) < argc) {
+			fprintf(stderr, "Error: unexpected argument %s - -r "
+				"takes an input and an output ROM\n",
+				argv[optind + 2]);
 			return EXIT_FAILURE;
 		}
 		if (crypt_rom(argv[optind], argv[optind + 1]))
