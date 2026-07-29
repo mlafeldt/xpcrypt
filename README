@@ -46,13 +46,6 @@ $ make
 Of course, you can also install it:
 $ make install
 
-CMake is supported too:
-$ mkdir build
-$ cd build/
-$ cmake ..
-$ make
-$ make install
-
 
 ---==---
    Usage
