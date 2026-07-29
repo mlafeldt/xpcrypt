@@ -106,6 +106,25 @@ as they are, and so is the payload of a block with an unknown payload key; in
 that case xpcrypt prints a warning.
 
 
+---===============---
+   Inline data blocks
+---==================---
+
+The code type A is a block too, but a simpler one:
+
+  Inline data: A?aaaaaa vvvv
+
+It has no length and no payload key. The Xploder copies the value field plus
+the six raw bytes of every code below the header, without decrypting them,
+until the cheat ends - so an inline data block is as long as the rest of the
+cheat it sits in.
+
+That boundary is not in the codes themselves, and xpcrypt reads a stream of
+codes, not cheats. So it takes every code that follows the header as payload
+and leaves it exactly as it is, in both directions, and prints a warning to
+say so. Feed it one cheat at a time if you have more than one.
+
+
 ---====---
    Samples
 ---=======---

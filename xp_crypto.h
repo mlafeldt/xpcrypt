@@ -68,30 +68,52 @@ int xp_decrypt_code(u8 *code, enum xp_key key);
  */
 #define XP_MEGA_DESC_LEN	10
 
+/* The three code types that take a block of payload codes below them */
+enum xp_block_kind {
+	XP_BLOCK_SUPER,		/* code type 5, Supercode */
+	XP_BLOCK_MEGA,		/* code type 6, Megacode */
+	XP_BLOCK_INLINE		/* code type A, inline data block */
+};
+
 /**
- * struct xp_block - Layout of a Supercode/Megacode block.
- * @mega: 0: code type 5 (Supercode), 1: code type 6 (Megacode)
+ * struct xp_block - Layout of a block of payload codes.
+ * @kind: which of the three block types the header is
  * @payload_key: key the payload codes are encrypted with
  * @known_key: non-zero if xpcrypt is able to process the payload
- * @num_lines: number of payload codes that follow the header
+ * @num_lines: number of payload codes that follow the header. Only a Supercode
+ *	and a Megacode say how much payload they have; an XP_BLOCK_INLINE
+ *	payload runs to the end of the cheat, and this is 0 for one.
  */
 struct xp_block {
-	int mega;
+	enum xp_block_kind kind;
 	int payload_key;
 	int known_key;
 	int num_lines;
 };
 
 /**
- * xp_parse_block - Get the layout of a Supercode/Megacode block.
+ * xp_parse_block - Get the layout of a block of payload codes.
  * @code: decrypted header code of the block
  * @blk: block layout to be filled in
  * @return: 0: success, -1: @code is not a block header
+ *
+ * The code types 5 and 6 declare how many bytes of payload follow them. The
+ * code type A does not: its payload is raw, unencrypted, and runs to the end of
+ * the cheat. Such a block is reported as XP_BLOCK_INLINE, and it is up to the
+ * caller to say where the cheat ends.
  */
 int xp_parse_block(const u8 *code, struct xp_block *blk);
 
 /**
- * xp_decrypt_block_line - Decrypt a payload code of a Supercode/Megacode block.
+ * xp_in_payload - Is a code at position @index still part of block @blk?
+ * @blk: block layout returned by xp_parse_block()
+ * @index: position of the code in the payload, starting at 0
+ * @return: non-zero if it is
+ */
+int xp_in_payload(const struct xp_block *blk, int index);
+
+/**
+ * xp_decrypt_block_line - Decrypt a payload code of a block.
  * @code: code to be decrypted
  * @blk: block layout returned by xp_parse_block()
  * @index: position of the code in the payload, starting at 0
@@ -100,7 +122,7 @@ int xp_parse_block(const u8 *code, struct xp_block *blk);
 int xp_decrypt_block_line(u8 *code, const struct xp_block *blk, int index);
 
 /**
- * xp_encrypt_block_line - Encrypt a payload code of a Supercode/Megacode block.
+ * xp_encrypt_block_line - Encrypt a payload code of a block.
  * @code: code to be encrypted
  * @blk: block layout returned by xp_parse_block()
  * @index: position of the code in the payload, starting at 0

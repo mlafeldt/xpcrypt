@@ -101,8 +101,8 @@ static int is_code(const char *s, int digits)
 }
 
 /*
- * Set up processing of the payload of a Supercode/Megacode block. Returns the
- * payload position to start at, or -1 if @code is not a block header.
+ * Set up processing of the payload of a block. Returns the payload position to
+ * start at, or -1 if @code is not a block header.
  */
 static int start_block(const u8 *code, struct xp_block *blk)
 {
@@ -112,6 +112,16 @@ static int start_block(const u8 *code, struct xp_block *blk)
 	if (!blk->known_key)
 		fprintf(stderr, "Warning: unknown payload key %i, payload of "
 			"block left as it is\n", blk->payload_key);
+
+	/*
+	 * A Supercode or Megacode says how long its payload is, so we can tell
+	 * where it ends. The payload of a code type A runs to the end of the
+	 * cheat, which is a boundary that is not in the codes themselves - so
+	 * we take every code that follows.
+	 */
+	if (blk->kind == XP_BLOCK_INLINE)
+		fprintf(stderr, "Warning: code type A has no payload length, "
+			"all following codes are treated as its payload\n");
 
 	return 0;
 }
@@ -146,15 +156,15 @@ static int crypt_codes(int mode, enum xp_key key)
 
 		if (index >= 0) {
 			/*
-			 * The code belongs to the payload of a Supercode or
-			 * Megacode. It's data, not a code of its own.
+			 * The code belongs to the payload of a block. It's
+			 * data, not a code of its own.
 			 */
 			if (mode == MODE_DECRYPT_CODES)
 				xp_decrypt_block_line(code, &blk, index);
 			else
 				xp_encrypt_block_line(code, &blk, index);
 
-			if (++index >= blk.num_lines)
+			if (!xp_in_payload(&blk, ++index))
 				index = -1;
 		} else if (mode == MODE_DECRYPT_CODES) {
 			xp_decrypt_code(code, key);
@@ -164,8 +174,10 @@ static int crypt_codes(int mode, enum xp_key key)
 			 * encrypted anyway. If they are still set we could not
 			 * decrypt it, so its key and size fields are still
 			 * ciphertext and must not be used to start a block.
+			 * A code type A header has neither field, and the
+			 * Xploder never encrypts one, so it is never in doubt.
 			 */
-			if (!(code[0] & 0x07))
+			if (!(code[0] & 0x07) || (code[0] & 0xF0) == 0xA0)
 				index = start_block(code, &blk);
 		} else {
 			/* The header has to be parsed before it's encrypted. */

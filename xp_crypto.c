@@ -226,7 +226,7 @@ static int decrypt_payload(u8 *code, int key)
 
 	switch (key) {
 	case 6:
-		code[0] = ~in[1];
+		code[0] = (u8)~in[1];
 		code[1] = in[0] - 0x34;
 		code[2] = in[4] - 0x1B;
 		code[3] = in[3] ^ in[1];
@@ -258,7 +258,7 @@ static int encrypt_payload(u8 *code, int key)
 	switch (key) {
 	case 6:
 		code[0] = in[1] + 0x34;
-		code[1] = ~in[0];
+		code[1] = (u8)~in[0];
 		code[2] = in[5] + code[0];
 		code[3] = in[3] ^ code[1];
 		code[4] = in[2] + 0x1B;
@@ -276,7 +276,7 @@ static int encrypt_payload(u8 *code, int key)
 }
 
 /**
- * xp_parse_block - Get the layout of a Supercode/Megacode block.
+ * xp_parse_block - Get the layout of a block of payload codes.
  * @code: decrypted header code of the block
  * @blk: block layout to be filled in
  * @return: 0: success, -1: @code is not a block header
@@ -290,17 +290,29 @@ int xp_parse_block(const u8 *code, struct xp_block *blk)
 
 	switch (code[0] & 0xF0) {
 	case 0x50: /* Supercode */
-		blk->mega = 0;
+		blk->kind = XP_BLOCK_SUPER;
 		blk->payload_key = code[4] >> 4;
 		nbytes = ((code[4] & 0x0F) << 8) | code[5];
 		if (nbytes < 1)
 			return -1;
 		break;
 	case 0x60: /* Megacode */
-		blk->mega = 1;
+		blk->kind = XP_BLOCK_MEGA;
 		blk->payload_key = code[3] & 0x0F;
 		nbytes = ((code[4] << 8) | code[5]) + XP_MEGA_DESC_LEN;
 		break;
+	case 0xA0: /* Inline data block */
+		/*
+		 * No length and no payload key: the Xploder copies the value
+		 * field plus the six raw bytes of every code below the header
+		 * until the cheat ends. So every following code is payload, and
+		 * how many of them there are is not in the header.
+		 */
+		blk->kind = XP_BLOCK_INLINE;
+		blk->payload_key = 0;
+		blk->known_key = 1;
+		blk->num_lines = 0;
+		return 0;
 	default:
 		return -1;
 	}
@@ -317,7 +329,21 @@ int xp_parse_block(const u8 *code, struct xp_block *blk)
 }
 
 /**
- * xp_decrypt_block_line - Decrypt a payload code of a Supercode/Megacode block.
+ * xp_in_payload - Is a code at position @index still part of block @blk?
+ * @blk: block layout returned by xp_parse_block()
+ * @index: position of the code in the payload, starting at 0
+ * @return: non-zero if it is
+ */
+int xp_in_payload(const struct xp_block *blk, int index)
+{
+	if (blk == NULL || index < 0)
+		return 0;
+
+	return blk->kind == XP_BLOCK_INLINE || index < blk->num_lines;
+}
+
+/**
+ * xp_decrypt_block_line - Decrypt a payload code of a block.
  * @code: code to be decrypted
  * @blk: block layout returned by xp_parse_block()
  * @index: position of the code in the payload, starting at 0
@@ -325,7 +351,7 @@ int xp_parse_block(const u8 *code, struct xp_block *blk)
  */
 int xp_decrypt_block_line(u8 *code, const struct xp_block *blk, int index)
 {
-	if (code == NULL || blk == NULL || index < 0 || index >= blk->num_lines)
+	if (code == NULL || !xp_in_payload(blk, index))
 		return -1;
 
 	if (known_payload_key(blk->payload_key))
@@ -335,7 +361,7 @@ int xp_decrypt_block_line(u8 *code, const struct xp_block *blk, int index)
 }
 
 /**
- * xp_encrypt_block_line - Encrypt a payload code of a Supercode/Megacode block.
+ * xp_encrypt_block_line - Encrypt a payload code of a block.
  * @code: code to be encrypted
  * @blk: block layout returned by xp_parse_block()
  * @index: position of the code in the payload, starting at 0
@@ -343,7 +369,7 @@ int xp_decrypt_block_line(u8 *code, const struct xp_block *blk, int index)
  */
 int xp_encrypt_block_line(u8 *code, const struct xp_block *blk, int index)
 {
-	if (code == NULL || blk == NULL || index < 0 || index >= blk->num_lines)
+	if (code == NULL || !xp_in_payload(blk, index))
 		return -1;
 
 	if (known_payload_key(blk->payload_key))
