@@ -22,7 +22,6 @@
 
 #include <ctype.h>
 #include <errno.h>
-#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
@@ -333,19 +332,11 @@ static int crypt_rom(const char *infile, const char *outfile)
 			infile);
 		goto out;
 	}
-	if (size < XP_ROM_BLKSIZE) {
+	nbytes = (size_t)size;
+	if (nbytes < XP_ROM_MIN_SIZE) {
 		fprintf(stderr, "Error: input ROM too small\n");
 		goto out;
 	}
-	/*
-	 * The crypto takes the size as an int, and the whole ROM has to fit
-	 * into memory anyway, so anything larger is not a ROM we can process.
-	 */
-	if (size > INT_MAX) {
-		fprintf(stderr, "Error: input ROM too large\n");
-		goto out;
-	}
-	nbytes = (size_t)size;
 
 	buf = (u8*)malloc(nbytes);
 	if (buf == NULL) {
@@ -372,7 +363,7 @@ static int crypt_rom(const char *infile, const char *outfile)
 		fprintf(stderr, "Warning: could not close input ROM %s\n", infile);
 	fp = NULL;
 
-	if (xp_crypt_rom(buf, (int)size)) {
+	if (xp_crypt_rom(buf, nbytes)) {
 		fprintf(stderr, "Error: could not process ROM\n");
 		goto out;
 	}

@@ -23,6 +23,7 @@
 #ifndef XP_CRYPTO_H
 #define XP_CRYPTO_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 typedef uint8_t u8;
@@ -130,32 +131,34 @@ int xp_decrypt_block_line(u8 *code, const struct xp_block *blk, int index);
  */
 int xp_encrypt_block_line(u8 *code, const struct xp_block *blk, int index);
 
-
-/* Xploder ROMs are encrypted in ECB mode, this is the block size */
-#define XP_ROM_BLKSIZE	512
+/* Plaintext ROM marker used to choose the automatic conversion direction. */
+#define XP_ROM_SIG_TEXT		"Sony"
+#define XP_ROM_SIG_OFFSET	0x10
+#define XP_ROM_SIG_LEN		(sizeof(XP_ROM_SIG_TEXT) - 1)
+#define XP_ROM_MIN_SIZE		(XP_ROM_SIG_OFFSET + XP_ROM_SIG_LEN)
 
 /**
  * xp_encrypt_rom - Encrypt an Xploder ROM.
  * @rom: buffer holding ROM in raw format
- * @size: size of ROM buffer
+ * @size: number of bytes to process
  * @return: 0: success, -1: error
  */
-int xp_encrypt_rom(u8 *rom, int size);
+int xp_encrypt_rom(u8 *rom, size_t size);
 
 /**
  * xp_decrypt_rom - Decrypt an Xploder ROM.
  * @rom: buffer holding encrypted ROM
- * @size: size of ROM buffer
+ * @size: number of bytes to process
  * @return: 0: success, -1: error
  */
-int xp_decrypt_rom(u8 *rom, int size);
+int xp_decrypt_rom(u8 *rom, size_t size);
 
 /**
  * xp_crypt_rom - Automatically decrypt or encrypt an Xploder ROM.
  * @rom: buffer holding ROM
- * @size: size of ROM buffer
+ * @size: size of ROM buffer; must be at least XP_ROM_MIN_SIZE
  * @return: 0: success, -1: error
  */
-int xp_crypt_rom(u8 *rom, int size);
+int xp_crypt_rom(u8 *rom, size_t size);
 
 #endif /*XP_CRYPTO_H*/
