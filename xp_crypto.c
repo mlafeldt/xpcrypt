@@ -33,13 +33,19 @@
  *   - the code types 32/82 and 33/83 have firmware crypto routes (Special32
  *     and Special33), and are copied verbatim here - see below;
  *   - the "switched off by default" bit survives decryption, so that a code
- *     round-trips; the cartridge's engine keeps it too and reads at an
- *     address 0x08000000 away because of it;
+ *     round-trips; the cartridge clears the whole key nibble instead. Only the
+ *     cartridge does, though: XLink.exe stamps byte 0 as (b & 0xF8) | key and
+ *     keeps that bit, so a round trip through the pair of them is what the
+ *     format expected. The cartridge's engine keeps the bit too and reads at
+ *     an address 0x08000000 away because of it;
  *   - the payload of a block whose key we cannot process is left alone, where
  *     the firmware writes a row of zeros;
- *   - a Supercode or Megacode header declaring no payload is treated as an
- *     ordinary code, because the line below it is one; the cartridge stages
- *     the empty block and its engine then runs away;
+ *   - a Supercode header declaring no payload is treated as an ordinary code,
+ *     because the line below it is one; the cartridge stages the empty block
+ *     and its engine then runs away. A Megacode cannot say the same thing: its
+ *     length counts the bytes after the breakpoint descriptor, so a zero there
+ *     still means the two codes the descriptor occupies, and the cartridge's
+ *     stager reads those two unconditionally - as this does;
  *   - a code type A takes every code that follows to the end of the input,
  *     because a stream of codes has no cheat-entry boundary in it, where the
  *     cartridge stops at the end of the cheat;
@@ -58,6 +64,13 @@
  *
  * Note that x | 0xEE is (x & 0x11) + 0xEE, and that (x ^ 0xEF) + 0x76 of the
  * key 7 is 0xF5 - (x ^ 0x90).
+ *
+ * Both spellings are attested on the PC side. XLink.exe, the vendor's DOS
+ * X-Link utility, slides the same windows over its own copies of those three
+ * strings, and it does so in the *encrypt* direction, which the cartridge has
+ * no trace of - so it, not a round trip, is what the encrypt routines below are
+ * checked against. X-Killer v0.55, a third party's tool from 1999, computes the
+ * keys 6 and 7 from the closed forms instead, the same ones used here.
  */
 
 /*
@@ -83,9 +96,11 @@ static int keyed_type(const u8 *code)
  * it is - with two exceptions. The Xploder gives the first bytes 32 and 82 a
  * route that adds 'F', 'C' and 'D' to the bytes 1 to 3, and 33 and 83 one that
  * inverts them. Those four bytes are all there is to it, and they are left
- * unimplemented on purpose: no database we have seen uses them, the Xploder
- * has no encrypt side to check a round trip against, and the constants the
- * reference implementation uses for them are wrong.
+ * unimplemented on purpose: no database we have seen uses them, no encrypter
+ * implements them - not the cartridge, which encrypts nothing, and not
+ * XLink.exe, whose method table has a route for every other key and none for
+ * these - and the constants the reference implementation uses for them are
+ * wrong.
  */
 
 /**
