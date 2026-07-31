@@ -443,6 +443,28 @@ int xp_rom_is_plain(const u8 *rom, size_t size)
 			XP_ROM_SIG_LEN) == 0;
 }
 
+/*
+ * The image cipher is a keystream over the absolute file offset - no key, no
+ * block, and nothing the cartridge contains: it lives in the PC-side upgrade
+ * tool, which is the only thing that ever sees an .fcd. Both directions were
+ * read out of XLink.exe (X-Link V1.091) at 0x2A4A0 and 0x2A640, and out of
+ * three other tools that agree with it byte for byte.
+ *
+ * rom_mask() depends on offset bits 0..8 and rom_addend() on bits 0..5, so the
+ * keystream repeats every 512 bytes. That period is why xpcrypt used to carry
+ * 1 KB of tables and call the transform ECB - it was the shadow of these six
+ * operations, not a block size.
+ */
+static u8 rom_mask(size_t i)
+{
+	return (u8)(i ^ ((i >> 1) + 0x45));
+}
+
+static u8 rom_addend(size_t i)
+{
+	return (u8)((i & 0x37) ^ 0x2C);
+}
+
 /**
  * xp_encrypt_rom - Encrypt an Xploder ROM.
  * @rom: buffer holding ROM in raw format
@@ -456,11 +478,8 @@ int xp_encrypt_rom(u8 *rom, size_t size)
 	if (rom == NULL)
 		return -1;
 
-	for (i = 0; i < size; i++) {
-		u8 mask = (u8)(i ^ ((i >> 1) + 0x45));
-		u8 addend = (u8)((i & 0x37) ^ 0x2C);
-		rom[i] = (u8)((rom[i] - addend) ^ mask);
-	}
+	for (i = 0; i < size; i++)
+		rom[i] = (u8)((rom[i] - rom_addend(i)) ^ rom_mask(i));
 
 	return 0;
 }
@@ -478,11 +497,8 @@ int xp_decrypt_rom(u8 *rom, size_t size)
 	if (rom == NULL)
 		return -1;
 
-	for (i = 0; i < size; i++) {
-		u8 mask = (u8)(i ^ ((i >> 1) + 0x45));
-		u8 addend = (u8)((i & 0x37) ^ 0x2C);
-		rom[i] = (u8)((rom[i] ^ mask) + addend);
-	}
+	for (i = 0; i < size; i++)
+		rom[i] = (u8)((rom[i] ^ rom_mask(i)) + rom_addend(i));
 
 	return 0;
 }
