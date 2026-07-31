@@ -417,6 +417,32 @@ int xp_encrypt_block_line(u8 *code, const struct xp_block *blk, int index)
 }
 
 
+#define XP_ROM_SIG_TEXT		"Sony"
+#define XP_ROM_SIG_OFFSET	0x10
+#define XP_ROM_SIG_LEN		(sizeof(XP_ROM_SIG_TEXT) - 1)
+
+typedef char xp_rom_min_size_matches_marker[
+	XP_ROM_SIG_OFFSET + XP_ROM_SIG_LEN == XP_ROM_MIN_SIZE ? 1 : -1];
+
+/**
+ * xp_rom_is_plain - Check whether an Xploder ROM is plaintext.
+ * @rom: buffer holding ROM data
+ * @size: size of ROM buffer
+ * @return: non-zero if the plaintext marker is present
+ *
+ * Decrypted ROMs have the string "Licensed by Sony Computer Entertainment
+ * Inc." in the header, so looking for "Sony" is enough to identify one.
+ * Compare the bytes rather than a u32: @rom points into a buffer we do not
+ * own, so it need not be aligned, and a word compare would look for the string
+ * byte-swapped on a big-endian host.
+ */
+int xp_rom_is_plain(const u8 *rom, size_t size)
+{
+	return rom != NULL && size >= XP_ROM_SIG_OFFSET + XP_ROM_SIG_LEN &&
+		memcmp(&rom[XP_ROM_SIG_OFFSET], XP_ROM_SIG_TEXT,
+			XP_ROM_SIG_LEN) == 0;
+}
+
 /**
  * xp_encrypt_rom - Encrypt an Xploder ROM.
  * @rom: buffer holding ROM in raw format
@@ -469,19 +495,14 @@ int xp_decrypt_rom(u8 *rom, size_t size)
  */
 int xp_crypt_rom(u8 *rom, size_t size)
 {
+	/*
+	 * Judge the buffer before converting it: a buffer too short to hold the
+	 * marker is not a ROM, where xp_rom_is_plain() alone would call it an
+	 * encrypted one and hand back garbage.
+	 */
 	if (rom == NULL || size < XP_ROM_MIN_SIZE)
 		return -1;
 
-	/*
-	 * Check if ROM needs to be decrypted or encrypted. Decrypted ROMs have
-	 * the string "Licensed by Sony Computer Entertainment Inc." in the
-	 * header. Let's look for "Sony". Compare the bytes rather than a u32:
-	 * @rom points into a buffer we do not own, so it need not be aligned,
-	 * and a word compare would look for the string byte-swapped on a
-	 * big-endian host.
-	 */
-	if (memcmp(&rom[XP_ROM_SIG_OFFSET], XP_ROM_SIG_TEXT, XP_ROM_SIG_LEN))
-		return xp_decrypt_rom(rom, size);
-	else
-		return xp_encrypt_rom(rom, size);
+	return xp_rom_is_plain(rom, size) ? xp_encrypt_rom(rom, size)
+		: xp_decrypt_rom(rom, size);
 }

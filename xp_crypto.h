@@ -131,11 +131,16 @@ int xp_decrypt_block_line(u8 *code, const struct xp_block *blk, int index);
  */
 int xp_encrypt_block_line(u8 *code, const struct xp_block *blk, int index);
 
-/* Plaintext ROM marker used to choose the automatic conversion direction. */
-#define XP_ROM_SIG_TEXT		"Sony"
-#define XP_ROM_SIG_OFFSET	0x10
-#define XP_ROM_SIG_LEN		(sizeof(XP_ROM_SIG_TEXT) - 1)
-#define XP_ROM_MIN_SIZE		(XP_ROM_SIG_OFFSET + XP_ROM_SIG_LEN)
+/* Plaintext marker offset plus length; minimum size of a recognizable ROM. */
+#define XP_ROM_MIN_SIZE		0x14
+
+/**
+ * xp_rom_is_plain - Check whether an Xploder ROM is plaintext.
+ * @rom: buffer holding ROM data
+ * @size: size of ROM buffer
+ * @return: non-zero if the plaintext marker is present
+ */
+int xp_rom_is_plain(const u8 *rom, size_t size);
 
 /**
  * xp_encrypt_rom - Encrypt an Xploder ROM.
