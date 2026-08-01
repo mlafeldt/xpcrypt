@@ -49,8 +49,8 @@
  *   - a code type A takes every code that follows to the end of the input,
  *     because a stream of codes has no cheat-entry boundary in it, where the
  *     cartridge stops at the end of the cheat;
- *   - the code engine, the cheat database, the ROM compressor and the
- *     anti-tamper check are not implemented at all.
+ *   - the code engine, the ROM compressor and the anti-tamper check are not
+ *     implemented. The CLI reads the cheat database, but does not emulate it.
  */
 
 /*
@@ -501,6 +501,25 @@ int xp_decrypt_rom(u8 *rom, size_t size)
 		rom[i] = (u8)((rom[i] ^ rom_mask(i)) + rom_addend(i));
 
 	return 0;
+}
+
+/**
+ * xp_rom_to_plain - Bring an Xploder ROM into plaintext.
+ * @rom: buffer holding ROM data, decrypted in place if encrypted
+ * @size: size of ROM buffer
+ * @return: 0: success, -1: not an Xploder ROM in either state
+ *
+ * Unlike xp_crypt_rom(), which trusts the marker to pick a direction, this
+ * confirms that decrypting produced the marker. A buffer that fails is not an
+ * Xploder ROM, and its contents are left undefined.
+ */
+int xp_rom_to_plain(u8 *rom, size_t size)
+{
+	if (xp_rom_is_plain(rom, size))
+		return 0;
+	if (xp_decrypt_rom(rom, size))
+		return -1;
+	return xp_rom_is_plain(rom, size) ? 0 : -1;
 }
 
 /**

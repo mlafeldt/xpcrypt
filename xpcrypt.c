@@ -24,6 +24,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <getopt.h>
 #include "xp_crypto.h"
 
@@ -38,6 +39,7 @@
 	"Options are:\n" \
 	" -d/--decrypt-codes        decrypt codes (default)\n" \
 	" -e/--encrypt-codes <key>  encrypt codes with key [4,5,6,7]\n" \
+	" -x/--extract-codes        extract and decrypt codes from a ROM\n" \
 	" -r/--rom                  decrypt or encrypt ROM\n" \
 	" -h/--help                 display this information\n" \
 	" -V/--version              display the version of "APP_NAME"\n\n" \
@@ -51,10 +53,11 @@
 	"the GNU General Public License.  This program has absolutely no warranty.\n"
 
 /* Short and long options accepted by getopt */
-static const char *shortopts = "de:rhV";
+static const char *shortopts = "de:xrhV";
 static const struct option longopts[] = {
 	{ "decrypt-codes", no_argument, NULL, 'd' },
 	{ "encrypt-codes", required_argument, NULL, 'e' },
+	{ "extract-codes", no_argument, NULL, 'x' },
 	{ "rom", no_argument, NULL, 'r' },
 	{ "help", no_argument, NULL, 'h' },
 	{ "version", no_argument, NULL, 'V' },
@@ -65,6 +68,7 @@ static const struct option longopts[] = {
 enum {
 	MODE_DECRYPT_CODES,
 	MODE_ENCRYPT_CODES,
+	MODE_EXTRACT_CODES,
 	MODE_CRYPT_ROM
 };
 
@@ -338,21 +342,293 @@ static int print_out(const char *text)
 	return 0;
 }
 
-/*
- * Decrypt or encrypt an Xploder ROM.
- */
-static int crypt_rom(const char *infile, const char *outfile)
-{
-	FILE *fp;
-	u8 *buf = NULL;
-	long size;
-	size_t nbytes;
-	int ret = -1;
+/* Abbreviations used in game and cheat names in the ROM database. */
+static const char *const db_abbr[] = {
+	NULL,
+	"Infinite",
+	"Unlimited",
+	" Lives",
+	"Player",
+	" Energy",
+	" Time",
+	"Money"
+};
 
-	if (infile == NULL || outfile == NULL)
+struct db_info {
+	size_t games;
+	size_t cheats;
+	size_t lines;
+};
+
+struct db_record {
+	const u8 *game_name;
+	size_t game_name_len;
+	const u8 *cheat_name;
+	size_t cheat_name_len;
+	const u8 *codes;
+	size_t nlines;
+	int first_in_game;
+	int last_in_game;
+};
+
+struct db_cursor {
+	const u8 *rom;
+	size_t size;
+	size_t pos;
+	const u8 *game_name;
+	size_t game_name_len;
+	size_t cheats_left;
+};
+
+static int db_is_term(const u8 *rom, size_t size, size_t pos)
+{
+	/* Four 0xFF bytes serve as a terminator or an erased-flash boundary. */
+	return pos <= size && size - pos >= 4 &&
+		memcmp(&rom[pos], "\xFF\xFF\xFF\xFF", 4) == 0;
+}
+
+/*
+ * Read and validate a database name at @pos. Bytes 1 through 7 are the name
+ * abbreviations above; bytes from 0x80 through 0xFE are accepted because the
+ * Japanese database stores Shift-JIS. 0x7F and 0xFF are not name bytes.
+ */
+static int db_name_end(const u8 *rom, size_t size, size_t pos, size_t *end)
+{
+	size_t i;
+
+	for (i = pos; i < size; i++) {
+		u8 c = rom[i];
+
+		if (c == 0) {
+			if (i == pos)
+				return -1;
+			*end = i;
+			return 0;
+		}
+		if (c == 0x7F || c == 0xFF || (c < 0x20 && c > 7))
+			return -1;
+	}
+
+	return -1;
+}
+
+/*
+ * Set up a cursor over a database record chain. The chain is a sequence of
+ * gameName/N, then N cheatName/M/6*M-byte records, terminated by four 0xFF
+ * bytes.
+ */
+static void init_db_cursor(struct db_cursor *cursor, const u8 *rom,
+		size_t size, size_t start)
+{
+	cursor->rom = rom;
+	cursor->size = size;
+	cursor->pos = start;
+	cursor->game_name = NULL;
+	cursor->game_name_len = 0;
+	cursor->cheats_left = 0;
+}
+
+/*
+ * Read a name and the count byte after its terminator, advancing @cursor past
+ * both. Returns -1 when either is missing or malformed.
+ */
+static int db_read_name(struct db_cursor *cursor, const u8 **name, size_t *len,
+		u8 *count)
+{
+	size_t name_end;
+
+	if (db_name_end(cursor->rom, cursor->size, cursor->pos, &name_end) ||
+			name_end + 1 >= cursor->size)
+		return -1;
+	*name = cursor->rom + cursor->pos;
+	*len = name_end - cursor->pos;
+	*count = cursor->rom[name_end + 1];
+	cursor->pos = name_end + 2;
+	return 0;
+}
+
+/*
+ * Read and validate one cheat record. Returns 1 for a record, 0 for a clean
+ * end, and -1 for a malformed chain. Every size check is made before the
+ * corresponding read.
+ */
+static int db_cursor_next(struct db_cursor *cursor, struct db_record *record)
+{
+	u8 nlines;
+
+	if (cursor->rom == NULL || cursor->pos > cursor->size)
 		return -1;
 
-	/* "b": a ROM is binary, and Windows would translate line endings. */
+	record->first_in_game = cursor->cheats_left == 0;
+	if (record->first_in_game) {
+		u8 ncheats;
+
+		if (db_is_term(cursor->rom, cursor->size, cursor->pos))
+			return cursor->game_name == NULL ? -1 : 0;
+		if (db_read_name(cursor, &cursor->game_name,
+				&cursor->game_name_len, &ncheats))
+			return -1;
+		if (ncheats == 0)
+			return -1;
+		cursor->cheats_left = ncheats;
+	}
+
+	if (db_read_name(cursor, &record->cheat_name, &record->cheat_name_len,
+			&nlines))
+		return -1;
+	record->game_name = cursor->game_name;
+	record->game_name_len = cursor->game_name_len;
+	if ((size_t)nlines > (cursor->size - cursor->pos) / XP_CODE_LEN)
+		return -1;
+	record->codes = cursor->rom + cursor->pos;
+	record->nlines = nlines;
+	cursor->pos += (size_t)nlines * XP_CODE_LEN;
+	record->last_in_game = cursor->cheats_left == 1;
+	cursor->cheats_left--;
+
+	return 1;
+}
+
+static int db_richer(const struct db_info *candidate,
+		const struct db_info *best)
+{
+	if (candidate->games != best->games)
+		return candidate->games > best->games;
+	if (candidate->cheats != best->cheats)
+		return candidate->cheats > best->cheats;
+	return candidate->lines > best->lines;
+}
+
+/*
+ * Locate the database from its framing, without assuming a ROM address or a
+ * particular first game. In the known Xploder ROM images, the complete record
+ * chain begins immediately after erased flash, so a candidate may start only
+ * at offset zero or where its previous four bytes are 0xFF. For every such
+ * offset:
+ *
+ *   1. db_cursor_next() must parse at least one game and all of its declared
+ *      cheats and six-byte code rows without running off the image;
+ *   2. every following game must parse the same way; and
+ *   3. the chain must end cleanly at its own four-0xFF terminator.
+ *
+ * Offsets still inside a longer erased run see the terminator before any game
+ * and fail step 1. A later game inside a real database may begin a valid
+ * suffix, but normally lacks the erased-flash boundary. If several framed
+ * chains do validate, prefer the one with the most games, then cheats, then
+ * code lines; an exact tie stays with the earlier offset because the scan is
+ * ascending.
+ *
+ * This framing rule matters because names are not simply printable strings:
+ * bytes 1 through 7 abbreviate words in both game and cheat names. The old
+ * research locator rejected an abbreviated early game and resynchronized at a
+ * printable suffix, losing 2,144 code rows across the five ROM images.
+ */
+static int find_database(const u8 *rom, size_t size, size_t *offset)
+{
+	struct db_info best = { 0, 0, 0 };
+	size_t best_offset = 0;
+	size_t start;
+	int found = 0;
+
+	for (start = 0; start < size; start++) {
+		struct db_cursor cursor;
+		struct db_record record;
+		struct db_info candidate = { 0, 0, 0 };
+		int ret;
+
+		if (start != 0 && (start < 4 ||
+				!db_is_term(rom, size, start - 4)))
+			continue;
+
+		init_db_cursor(&cursor, rom, size, start);
+		while ((ret = db_cursor_next(&cursor, &record)) == 1) {
+			if (record.first_in_game)
+				candidate.games++;
+			candidate.cheats++;
+			candidate.lines += record.nlines;
+		}
+		if (ret < 0)
+			continue;
+
+		if (!found || db_richer(&candidate, &best)) {
+			best = candidate;
+			best_offset = start;
+			found = 1;
+		}
+	}
+
+	if (!found)
+		return -1;
+	*offset = best_offset;
+	return 0;
+}
+
+static int print_db_name(const u8 *name, size_t len, int quoted)
+{
+	size_t i;
+
+	if (quoted && putchar('"') == EOF)
+		return -1;
+	for (i = 0; i < len; i++) {
+		u8 c = name[i];
+
+		if (c > 0 && c < sizeof(db_abbr) / sizeof(db_abbr[0])) {
+			if (printf("%s", db_abbr[c]) < 0)
+				return -1;
+		} else if (putchar(c) == EOF) {
+			return -1;
+		}
+	}
+	if (quoted && putchar('"') == EOF)
+		return -1;
+	return putchar('\n') == EOF ? -1 : 0;
+}
+
+/* Print one already-located database, decrypting each cheat independently. */
+static int print_database(const u8 *rom, size_t size, size_t start)
+{
+	struct db_cursor cursor;
+	struct db_record record;
+	int ret;
+
+	init_db_cursor(&cursor, rom, size, start);
+	while ((ret = db_cursor_next(&cursor, &record)) == 1) {
+		struct code_stream stream;
+		size_t line;
+
+		if (record.first_in_game && print_db_name(record.game_name,
+				record.game_name_len, 1))
+			return -1;
+		if (print_db_name(record.cheat_name, record.cheat_name_len, 0))
+			return -1;
+		init_code_stream(&stream, 1, XP_KEY_AUTO);
+		for (line = 0; line < record.nlines; line++) {
+			u8 code[XP_CODE_LEN];
+
+			memcpy(code, record.codes + line * XP_CODE_LEN,
+				XP_CODE_LEN);
+			crypt_code(code, &stream);
+			if (print_code(code))
+				return -1;
+		}
+		if (record.last_in_game && printf("\n//=====\n\n") < 0)
+			return -1;
+	}
+
+	return ret;
+}
+
+/* Read a ROM into memory for conversion or extraction. */
+static int read_rom(const char *infile, u8 **rom, size_t *rom_size)
+{
+	FILE *fp;
+	long size;
+	size_t nbytes;
+	u8 *buf = NULL;
+	int ret = -1;
+
+	*rom = NULL;
+	*rom_size = 0;
 	fp = fopen(infile, "rb");
 	if (fp == NULL) {
 		fprintf(stderr, "Error: could not open input ROM %s\n", infile);
@@ -375,7 +651,6 @@ static int crypt_rom(const char *infile, const char *outfile)
 		fprintf(stderr, "Error: memory allocation failed\n");
 		goto out;
 	}
-
 	if (fseek(fp, 0, SEEK_SET) != 0) {
 		fprintf(stderr, "Error: could not seek in input ROM %s\n", infile);
 		goto out;
@@ -385,15 +660,64 @@ static int crypt_rom(const char *infile, const char *outfile)
 		goto out;
 	}
 
-	/*
-	 * Nothing was written to this one, so a failure here says only that the
-	 * ROM we already hold in memory came off a file that then went wrong.
-	 * Say so and carry on: refusing to write the output would be the worse
-	 * answer, and pretending we never noticed is not one.
-	 */
-	if (fclose(fp) != 0)
+	*rom = buf;
+	*rom_size = nbytes;
+	buf = NULL;
+	ret = 0;
+out:
+	free(buf);
+	if (fclose(fp) != 0 && ret == 0)
 		fprintf(stderr, "Warning: could not close input ROM %s\n", infile);
-	fp = NULL;
+	return ret;
+}
+
+/* Extract and decrypt every cheat in an Xploder ROM database. */
+static int extract_codes(const char *infile)
+{
+	u8 *rom;
+	size_t size;
+	size_t offset;
+	int ret = -1;
+
+	if (read_rom(infile, &rom, &size))
+		return -1;
+
+	if (xp_rom_to_plain(rom, size)) {
+		fprintf(stderr, "Error: input is not an Xploder ROM\n");
+		goto out;
+	}
+
+	if (find_database(rom, size, &offset)) {
+		fprintf(stderr, "Error: no cheat database found in input ROM\n");
+		goto out;
+	}
+	if (print_database(rom, size, offset) || fflush(stdout) != 0 ||
+			ferror(stdout)) {
+		fprintf(stderr, "Error: could not write extracted codes\n");
+		goto out;
+	}
+
+	ret = 0;
+out:
+	free(rom);
+	return ret;
+}
+
+/*
+ * Decrypt or encrypt an Xploder ROM.
+ */
+static int crypt_rom(const char *infile, const char *outfile)
+{
+	FILE *fp = NULL;
+	u8 *buf;
+	size_t nbytes;
+	int ret = -1;
+
+	if (infile == NULL || outfile == NULL)
+		return -1;
+
+	if (read_rom(infile, &buf, &nbytes))
+		return -1;
 
 	if (xp_crypt_rom(buf, nbytes)) {
 		fprintf(stderr, "Error: could not process ROM\n");
@@ -478,6 +802,9 @@ int main(int argc, char *argv[])
 		case 'r':
 			mode = MODE_CRYPT_ROM;
 			break;
+		case 'x':
+			mode = MODE_EXTRACT_CODES;
+			break;
 		case 'h':
 			return print_out(HELP_TEXT) ? EXIT_FAILURE : EXIT_SUCCESS;
 		case 'V':
@@ -503,6 +830,19 @@ int main(int argc, char *argv[])
 			return EXIT_FAILURE;
 		}
 		if (crypt_codes(mode == MODE_DECRYPT_CODES, key))
+			return EXIT_FAILURE;
+		break;
+	case MODE_EXTRACT_CODES:
+		if (optind >= argc) {
+			fprintf(stderr, "Error: input ROM missing\n");
+			return EXIT_FAILURE;
+		}
+		if (optind + 1 < argc) {
+			fprintf(stderr, "Error: unexpected argument %s - -x takes "
+				"one input ROM\n", argv[optind + 1]);
+			return EXIT_FAILURE;
+		}
+		if (extract_codes(argv[optind]))
 			return EXIT_FAILURE;
 		break;
 	case MODE_CRYPT_ROM:

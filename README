@@ -56,6 +56,7 @@ Usage: xpcrypt [options] [input ROM] [output ROM]
 Options are:
  -d/--decrypt-codes        decrypt codes (default)
  -e/--encrypt-codes <key>  encrypt codes with key [4,5,6,7]
+ -x/--extract-codes        extract and decrypt codes from a ROM
  -r/--rom                  decrypt or encrypt ROM
  -h/--help                 display this information
  -V/--version              display the version of xpcrypt
@@ -82,6 +83,10 @@ directions.
 Further, you can decrypt or encrypt Xploder ROMs. Simply pass the -r option
 plus input and output file names to xpcrypt. It automatically detects if the
 ROM needs to be decrypted or encrypted.
+
+Use -x with a plaintext ROM or an encrypted .fcd image to print its complete
+cheat database. Game names are quoted, cheat names follow on their own lines,
+and every code is decrypted.
 
 
 ---=================---
@@ -168,6 +173,9 @@ $ ./xpcrypt < foo.txt > bar.txt
 
 Decrypt encrypted ROM foo.fcd to bar.rom:
 $ ./xpcrypt -r foo.fcd bar.rom
+
+Extract and decrypt every cheat from foo.fcd:
+$ ./xpcrypt -x foo.fcd
 
 
 ---=======---

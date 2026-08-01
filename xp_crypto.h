@@ -143,6 +143,14 @@ int xp_encrypt_block_line(u8 *code, const struct xp_block *blk, int index);
 int xp_rom_is_plain(const u8 *rom, size_t size);
 
 /**
+ * xp_rom_to_plain - Bring an Xploder ROM into plaintext.
+ * @rom: buffer holding ROM data, decrypted in place if encrypted
+ * @size: size of ROM buffer
+ * @return: 0: success, -1: not an Xploder ROM in either state
+ */
+int xp_rom_to_plain(u8 *rom, size_t size);
+
+/**
  * xp_encrypt_rom - Encrypt an Xploder ROM.
  * @rom: buffer holding ROM in raw format
  * @size: number of bytes to process
