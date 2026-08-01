@@ -190,29 +190,84 @@ static int start_block(const u8 *code, struct xp_block *blk)
 		fprintf(stderr, "Warning: unknown payload key %i, payload of "
 			"block left as it is\n", blk->payload_key);
 
-	/*
-	 * A Supercode or Megacode says how long its payload is, so we can tell
-	 * where it ends. The payload of a code type A runs to the end of the
-	 * cheat, which is a boundary that is not in the codes themselves - so
-	 * we take every code that follows.
-	 */
-	if (blk->kind == XP_BLOCK_INLINE)
-		fprintf(stderr, "Warning: code type A has no payload length, "
-			"all following codes are treated as its payload\n");
-
 	return 0;
+}
+
+/* State shared by the text-code reader and one extracted cheat entry. */
+struct code_stream {
+	struct xp_block blk;
+	int index;
+	int decrypt;
+	enum xp_key key;
+};
+
+/* Initialize a code stream. @decrypt selects the direction of the pass. */
+static void init_code_stream(struct code_stream *stream, int decrypt,
+		enum xp_key key)
+{
+	stream->index = -1;
+	stream->decrypt = decrypt;
+	stream->key = key;
+}
+
+/*
+ * Process one code in a stream. Returns non-zero when the code opened a type A
+ * block: its payload has no declared length, so every code that follows in the
+ * stream is consumed as payload.
+ */
+static int crypt_code(u8 *code, struct code_stream *stream)
+{
+	if (stream->index >= 0) {
+		/* This row is raw block payload, not a code of its own. */
+		if (stream->decrypt)
+			xp_decrypt_block_line(code, &stream->blk, stream->index);
+		else
+			xp_encrypt_block_line(code, &stream->blk, stream->index);
+
+		if (!xp_in_payload(&stream->blk, ++stream->index))
+			stream->index = -1;
+		return 0;
+	}
+
+	if (stream->decrypt) {
+		xp_decrypt_code(code, stream->key);
+		/*
+		 * The key bits of a header are clear once we have decrypted it,
+		 * and of a header that was never encrypted anyway. If they are
+		 * still set we could not decrypt it, so its key and size fields
+		 * are still ciphertext and must not be used to start a block. A
+		 * type A header has neither field and is never encrypted.
+		 */
+		if (!(code[0] & 0x07) || (code[0] & 0xF0) == 0xA0)
+			stream->index = start_block(code, &stream->blk);
+	} else {
+		/* The header has to be parsed before it is encrypted. */
+		stream->index = start_block(code, &stream->blk);
+		if (xp_encrypt_code(code, stream->key))
+			fprintf(stderr, "Warning: the Xploder doesn't encrypt "
+				"code %02X%02X%02X%02X %02X%02X, left as it "
+				"is\n", code[0], code[1], code[2], code[3],
+				code[4], code[5]);
+	}
+
+	return stream->index >= 0 && stream->blk.kind == XP_BLOCK_INLINE;
+}
+
+static int print_code(const u8 *code)
+{
+	return printf("%02X%02X%02X%02X %02X%02X\n", code[0], code[1],
+		code[2], code[3], code[4], code[5]) < 0 ? -1 : 0;
 }
 
 /*
  * Decrypt or encrypt Xploder codes.
  */
-static int crypt_codes(int mode, enum xp_key key)
+static int crypt_codes(int decrypt, enum xp_key key)
 {
 	char line[2048];
 	size_t len = 0;
 	u8 code[XP_CODE_LEN];
-	struct xp_block blk;
-	int index = -1; /* Position in the payload of a Supercode/Megacode */
+	struct code_stream stream;
 	int begins_line = 1; /* The line before this one ended where it should */
 	int ends_line = 1;
 	int ret;
@@ -222,6 +277,7 @@ static int crypt_codes(int mode, enum xp_key key)
 	 * and write them to stdout.
 	 */
 	setbuf(stdin, NULL);
+	init_code_stream(&stream, decrypt, key);
 
 	while ((ret = read_line(line, sizeof(line), &len, &ends_line)) == 1) {
 		/* Only a line we have the whole of can be a code. */
@@ -236,43 +292,19 @@ static int crypt_codes(int mode, enum xp_key key)
 			continue;
 		}
 
-		if (index >= 0) {
-			/*
-			 * The code belongs to the payload of a block. It's
-			 * data, not a code of its own.
-			 */
-			if (mode == MODE_DECRYPT_CODES)
-				xp_decrypt_block_line(code, &blk, index);
-			else
-				xp_encrypt_block_line(code, &blk, index);
+		/*
+		 * A Supercode or Megacode says how long its payload is, so we
+		 * can tell where it ends. The payload of a code type A runs to
+		 * the end of the cheat, a boundary text input does not carry -
+		 * unlike the ROM database, whose records end where the cheat
+		 * does.
+		 */
+		if (crypt_code(code, &stream))
+			fprintf(stderr, "Warning: code type A has no payload "
+				"length, all following codes are treated as its "
+				"payload\n");
 
-			if (!xp_in_payload(&blk, ++index))
-				index = -1;
-		} else if (mode == MODE_DECRYPT_CODES) {
-			xp_decrypt_code(code, key);
-			/*
-			 * The key bits of a header are clear once we have
-			 * decrypted it, and of a header that was never
-			 * encrypted anyway. If they are still set we could not
-			 * decrypt it, so its key and size fields are still
-			 * ciphertext and must not be used to start a block.
-			 * A code type A header has neither field, and the
-			 * Xploder never encrypts one, so it is never in doubt.
-			 */
-			if (!(code[0] & 0x07) || (code[0] & 0xF0) == 0xA0)
-				index = start_block(code, &blk);
-		} else {
-			/* The header has to be parsed before it's encrypted. */
-			index = start_block(code, &blk);
-			if (xp_encrypt_code(code, key))
-				fprintf(stderr, "Warning: the Xploder doesn't "
-					"encrypt code %02X%02X%02X%02X %02X%02X, "
-					"left as it is\n", code[0], code[1],
-					code[2], code[3], code[4], code[5]);
-		}
-
-		if (printf("%02X%02X%02X%02X %02X%02X\n", code[0], code[1],
-				code[2], code[3], code[4], code[5]) < 0)
+		if (print_code(code))
 			break;
 	}
 
@@ -470,7 +502,7 @@ int main(int argc, char *argv[])
 				argv[optind]);
 			return EXIT_FAILURE;
 		}
-		if (crypt_codes(mode, key))
+		if (crypt_codes(mode == MODE_DECRYPT_CODES, key))
 			return EXIT_FAILURE;
 		break;
 	case MODE_CRYPT_ROM:
