@@ -1,0 +1,4 @@
+__pycache__/
+roms/
+pc/
+fuzz-crashes/

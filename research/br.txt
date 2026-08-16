@@ -1,0 +1,15 @@
+; Bloody Roar / Infinite Energy Player 1 (xtepro.dec, stored form)
+; Megacode, payload key 0. Row 0 is the breakpoint descriptor and holds the
+; address 0x1F800198 verbatim - see "lui $k0,0x1F80 / ori $k0,0x0198" in the
+; payload. xpcrypt before 7d15818 decrypted it as a normal code (key bits 7 in the
+; 0x1F) and turned it into 1812FD87 F84B.
+60000000 002C
+1F800198 EA80
+FFFFFFFC 0038
+8040801F 1A3C
+98015A37 0000
+40A780EA 1A3C
+00389A40 0070
+1A400000 0000
+04005A27 0800
+40031000 0042
