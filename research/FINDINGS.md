@@ -56,11 +56,11 @@ evidence behind each decision, the test rig, and what is still unproven.
 
 The feature landed in `17e31fc..HEAD`.
 Read `git log -p 17e31fc..HEAD` for the code; the format itself is documented in
-`xp_crypto.c` (block comment above `known_payload_key()`) and in `README` (sections
+`crypto.c` (block comment above `known_payload_key()`) and in `README` (sections
 "Supercode/Megacode" and "Inline data blocks"). Do not re-derive from this doc — the
 source is authoritative.
 
-Public API added in `xp_crypto.h`: `struct xp_block`, `xp_parse_block()`,
+Public API added in `crypto.h`: `struct xp_block`, `xp_parse_block()`,
 `xp_in_payload()`, `xp_decrypt_block_line()`, `xp_encrypt_block_line()`. The block
 state machine is shared by `crypt_codes()` and the ROM extractor through
 `crypt_code()` in `xpcrypt.c`.
@@ -104,7 +104,7 @@ the byte count up to whole words at runtime (irrelevant for crypto — keep whol
 
 * `0` — payload stored in the clear. **This is the common case in real ROMs.**
 * `6`, `7` — the only two ciphers the cartridge implements (see
-  `decrypt_payload()`/`encrypt_payload()` in `xp_crypto.c`).
+  `decrypt_payload()`/`encrypt_payload()` in `crypto.c`).
 * anything else — **does not exist**: the firmware zeroes bytes 1 to 5 of the row and
   never writes byte 0 at all, so such a block is dead on the cart whatever the caller
   had in that byte (5.2). xpcrypt preserves the rows and warns instead, which is the
@@ -538,7 +538,7 @@ differently. Items 2-5 have since been fixed, leaving only item 1.
    the firmware copies them. All 20 are `CD`/`C6` lines used as comment rows
    (`"***** ISLAND STRIKE *****"`) plus Wipeout's `C6671C0E 505A`. xpcrypt used to
    decrypt them into garbage; it now follows the table and refuses to encrypt
-   those types. `XP_KEYED_TYPES` in `xp_crypto.c` is *not* that table - it is
+   those types. `XP_KEYED_TYPES` in `crypto.c` is *not* that table - it is
    what remains of it once the redundant parts are taken out. Of the 244
    entries, 120 are unreachable (the index masks bit 3 away, so no index with
    that bit set is ever formed), 48 select a key that `code[0] & 0x07` already

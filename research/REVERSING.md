@@ -143,7 +143,7 @@ load-bearing in §4.1.
 
 ## 2. First attempt, and why it failed
 
-The obvious move is to search for the cipher constants. `xp_crypto.c` is full of
+The obvious move is to search for the cipher constants. `crypto.c` is full of
 them: `0x57 0x42 0x31 0x32 0x33` (key 5), `0xAB` (key 6), `0x25 0xFA 0x12`
 (key 4), `0x73 0x90 0x35` (key 7).
 
@@ -906,7 +906,7 @@ $ uv run --with capstone python fxtest.py
 
 26,112 code/key combinations per image. The FX carts decrypt cheat codes exactly
 the way the V2 carts do — and `XP_KEYED_TYPES = 0xABFB` holds for all five, which
-is what makes the route table in `xp_crypto.c` safe rather than lucky.
+is what makes the route table in `crypto.c` safe rather than lucky.
 
 
 ### 10.4 One bug worth keeping

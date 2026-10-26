@@ -13,7 +13,7 @@ table that encrypts all four code keys and both Supercode/Megacode payload keys 
 the direction the cartridge never had. Executed, it produces exactly what
 `xpcrypt -e` produces, byte for byte, over 3,000 codes. A third party's tool,
 `x-killer.exe`, has keys 6 and 7 in *both* directions and computes them from the
-same closed forms `xp_crypto.c` uses rather than from the firmware's sliding
+same closed forms `crypto.c` uses rather than from the firmware's sliding
 windows. Neither Windows build has a code cipher at all.
 
 `FCD.md` is about the other cipher in these same four binaries - the whole-image
@@ -43,13 +43,13 @@ index that is *not* the key nibble. Eight methods, of which six are ciphers:
 the same windows over the same three seed strings the cartridge does - `"WHBX"`
 at `0x46F04`, `"FCD!"` at `0x46F09`, `" WB123"` at `0x4B470`, each referenced
 exactly once, and each from inside this function. The cartridge keeps them at
-`0x1BF29C`, `0x1BF2A4` and `0x1BF294`. `xp_crypto.c` carries the closed forms
+`0x1BF29C`, `0x1BF2A4` and `0x1BF294`. `crypto.c` carries the closed forms
 instead, which is why its key 4 says `0x25` where both of these say
 `'W' + 0x38 + 'H' + ('B' ^ 0x12) + ('X' | 0xEE)`.
 
 **3. `x-killer.exe` is the closed forms, from a stranger, in 1999.** Four
 routines, `cdecl(src, dst)`: key 6 and key 7, encrypt and decrypt each. Its key 7
-is `xp_crypto.c`'s expression instruction for instruction, down to writing
+is `crypto.c`'s expression instruction for instruction, down to writing
 `add al, 0x0B` for the C's `-= ... + 0xF5` - the same byte, signed the other way.
 It is by Tim
 Schuerewegen, not FCD, and it sits just after the two `.fcd` routines `FCD.md`
@@ -65,7 +65,7 @@ it matters (section 3).
 
 **6. Nothing anywhere implements Special32/33.** The `0x32`/`0x82` and
 `0x33`/`0x83` routes of `REVERSING.md` 6.7 have no encrypter in any of the four
-binaries, so the note in `xp_crypto.c` about them stands unchanged: still no
+binaries, so the note in `crypto.c` about them stands unchanged: still no
 authority, still deliberately unimplemented.
 
 
@@ -164,7 +164,7 @@ and key 6 is two instructions:
 ```
 000298BB  8a16             mov dl, [esi]
 000298BE  30c2             xor dl, al             ; ^ i
-000298C1  80c255           add dl, 0x55           ; xp_crypto.c writes - 0xAB
+000298C1  80c255           add dl, 0x55           ; crypto.c writes - 0xAB
 ```
 
 ### The payload routes
@@ -233,7 +233,7 @@ Three more things that function does, found in the ninth pass:
   Supercode path (`0x296C1`) uses `ceil(nnn / 6)` and agrees with the cartridge.
 
 Worth noting for what it does *not* do: neither the routine nor that caller
-checks the code's type. `xp_crypto.c` refuses to encrypt a code whose type the
+checks the code's type. `crypto.c` refuses to encrypt a code whose type the
 cartridge gives no crypto route (`XP_KEYED_TYPES`), because the cartridge would
 run the ciphertext; hand the same code to `0x297B0` and it encrypts it. Whether
 anything further up the tool filters those out is not established here - only
@@ -271,7 +271,7 @@ and key 7 is fully unrolled in the closed form:
 `0x0B` and `0xF5` are the same byte with the sign the other way, so this is
 `xp_encrypt_code()`'s key 7 exactly. Two things follow. The closed forms are not
 xpcrypt's invention - somebody outside the company had them in 1999. And the
-`^ key` on byte 0, which `xp_crypto.c` also uses, is not the vendor's spelling of
+`^ key` on byte 0, which `crypto.c` also uses, is not the vendor's spelling of
 it (section 3).
 
 X-Killer has no key 4, no key 5 and no payload cipher, which its own UI agrees
@@ -289,7 +289,7 @@ different with it:
 | cartridge, decrypting | `b & 0xF0` - drops the off-by-default bit too |
 | `XLink.exe`, encrypting | `(b & 0xF8) \| key` - masks the key bits, keeps bit 3 |
 | `x-killer.exe`, either way | `b ^ key` |
-| `xp_crypto.c` | `b ^ key`, and refuses the input if bits 0-2 are set |
+| `crypto.c` | `b ^ key`, and refuses the input if bits 0-2 are set |
 
 They agree on every input any of them will accept: a code presented for
 encryption has its key bits clear, and on those `(b & 0xF8) | k` and `b ^ k` are
@@ -437,7 +437,7 @@ was already right.
   keys now have an authority that is not xpcrypt's own inverse. It is the
   vendor's, it predates every cartridge dump we have, and it agrees on 3,000
   codes including byte 0.
-* The closed forms in `xp_crypto.c` are confirmed as *a* correct spelling rather
+* The closed forms in `crypto.c` are confirmed as *a* correct spelling rather
   than the original one - the vendor's tool and the cartridge both slide windows
   over `"WHBX"`, `"FCD!"` and `" WB123"` - and X-Killer shows the closed forms
   were already in circulation in 1999.
@@ -447,6 +447,6 @@ was already right.
 Still open, and now more pointedly: **Special32 and Special33 have no encrypter
 anywhere.** Four binaries, one of them the vendor's, and not one of them
 implements the `0x32`/`0x82` and `0x33`/`0x83` routes. Every argument in
-`xp_crypto.c`'s comment for leaving them out survives this - and the absence is
+`crypto.c`'s comment for leaving them out survives this - and the absence is
 now a small piece of evidence in its own right that those two routes were dead on
 the shelf rather than in use.

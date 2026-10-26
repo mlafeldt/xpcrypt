@@ -70,7 +70,7 @@ route table, key nibble behavior, payload ciphers, and block stagers come from
 the cartridge routine and callers transcribed in
 [REVERSING.md, sections 6-7](REVERSING.md#6-the-crypto-function-annotated).
 The converter implementation follows those results in
-[xp_crypto.c](../xp_crypto.c) and documents its deliberate departures at the
+[crypto.c](../crypto.c) and documents its deliberate departures at the
 top of that file.
 
 As an independent source-code cross-check, SkillerCMP's current implementation

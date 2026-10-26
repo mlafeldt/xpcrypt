@@ -10,13 +10,13 @@ numbers rather than restating them. The ninth pass of `AUDIT.md` (2026-10-26)
 re-derived all of it against the binaries and reshaped this list: it found the FX
 databases, the staging normaliser, and a header guard that disagrees with the cart.
 
-Where the code stands. The shipped source is `xpcrypt.c` plus `xp_crypto.c`/
-`xp_crypto.h` on `main`, and `research` is `main` plus this directory. Done there:
+Where the code stands. The shipped source is `xpcrypt.c` plus `crypto.c`/
+`crypto.h` on `main`, and `research` is `main` plus this directory. Done there:
 Supercode/Megacode and type A blocks, the route table, the ROM cipher as a closed
 form (1a), and `-x` for V2 images, empty games included. The module split (old item
 5) exists only on the unmerged `module-split` branch (`fed8a70`, forked from
-`854c1e1`). Its `db.c` predates the empty-game fix (`7070614`), and it renames
-`xp_crypto.c`/`.h` to `crypto.c`/`.h`. The version is still 1.1, and the README
+`854c1e1`). Its `db.c` predates the empty-game fix (`7070614`); its rename of
+`xp_crypto.c`/`.h` to `crypto.c`/`.h` has since been made on `main` too. The version is still 1.1, and the README
 history ends in 2009.
 
 Code fixes land on `main`; `research` is rebased onto it afterwards, and its gate
@@ -34,8 +34,7 @@ the monolith and then re-splitting does it twice, so settle the branch first:
 
 * **Recommended: rebase `fed8a70` onto `main` and merge it.** Port the empty-game
   loop of `7070614` (`db_cursor_next()`'s `do ... while (ncheats == 0)`) into
-  `db.c`'s cursor, and drop the `xp_crypto` → `crypto` rename while rebasing. The
-  rename buys nothing, and the notes here name `xp_crypto.c`. Gate: `make` here,
+  `db.c`'s cursor; its `xp_crypto` → `crypto` rename is already on `main`. Gate: `make` here,
   plus the branch's own `tests/`.
 * Otherwise delete the branch and mark `MODULE_SPLIT.md` as not pursued.
 
@@ -259,7 +258,7 @@ languages, and the vendor's encrypters agree. Settled.
 * ~~The `Makefile` passes `-s`, which clang rejects under `-Werror`~~ — done; the
   binary is stripped by `install -s` now (`FINDINGS.md` §1).
 * ~~The repo has a plain `TODO` with two lines~~ — removed in `dc66a3b`.
-* ~~`xp_crypto.h` guards itself with `_XP_CRYPTO_H_`~~ — done, `XP_CRYPTO_H`.
+* ~~`crypto.h` (then `xp_crypto.h`) guards itself with `_XP_CRYPTO_H_`~~ — done, `XP_CRYPTO_H`.
 * The version bump and README history entry are item 7; the root `check` target is
   item 1.
 

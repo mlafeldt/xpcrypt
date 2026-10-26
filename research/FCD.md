@@ -509,7 +509,7 @@ $F -d 0x1A12C0 24         # the receive helper: handshake only
 
 Now implemented in the shipped source:
 
-* The 1 KB of seed tables in `xp_crypto.c` became two expressions, and
+* The 1 KB of seed tables in `crypto.c` became two expressions, and
   `xp_encrypt_rom()`/`xp_decrypt_rom()` two-line loops. The tables were not wrong;
   they were 1024 bytes spelling out six operations.
 * `XP_ROM_BLKSIZE` and the "ECB mode" comment are gone. The explicit functions

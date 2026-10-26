@@ -1475,7 +1475,7 @@ recovered database has a Supercode that triggers it.
 **Which types the cipher covers is a separate question, but not an unrelated
 one.** The decrypt routine's 244-entry jump table gives no route to the types 2,
 A, C and E, so codes of those types are stored in the clear (`XP_KEYED_TYPES =
-0xABFB` in `xp_crypto.c`). That set does not line up with what the engine
+0xABFB` in `crypto.c`). That set does not line up with what the engine
 implements, and it was easy to read it as designed independently: E is a working
 write instruction that is never encrypted, while 1 - which does nothing at all -
 is. It lines up with staging instead. A is rewritten into a 5, C0 into a 7, and E
