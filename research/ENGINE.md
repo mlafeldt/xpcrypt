@@ -30,9 +30,12 @@ in §13. Every semantic carries the annotated disassembly behind it and, where
 the shipped cheat databases have specimens, real codes to go with it.
 
 Scripts: `engine.py` finds and reads the engine in any ROM, `engineemu.py` runs
-it, `dbtypes.py` surveys the shipped databases. The corpus is the same nine
-images as everything else here - five Xplorer/Xploder V2 generation, four
-Xplorer FX - and the five code databases they carry (§10).
+it, `dbtypes.py` surveys the shipped databases, and `typecx.py` is the file about
+the two types this document could not account for (§16). The corpus is the same
+nine images as everything else here - five Xplorer/Xploder V2 generation, four
+Xplorer FX - and the five code databases they carry (§10). `typecx.py` and
+`rom2005.py` add a tenth, release 2.005 out of `pc/ROMS/Xteng.fcd`, with a sixth
+database; nothing in it moves any result here.
 
 
 ## The four findings that matter
@@ -286,7 +289,14 @@ Xplorer 2.008 UK | G-Police | All weapons
 ### Type 2 - nothing
 
 No handler, no route in the cipher's jump table, and no specimen in any of the
-five databases. Nothing in the corpus says what it was meant to be.
+databases. Nothing in the corpus says what it was meant to be.
+
+`typecx.py` is the attempt to close that (§16). It adds a **tenth image** -
+`pc/ROMS/Xteng.fcd`, release 2.005, which ships with the DOS tool and carries a
+sixth database of 1,668 cheats - and widens §13's classifier scan from one idiom
+to three. Ten firmwares, 17,183 code lines: still no handler, still no site that
+looks at the nibble, still not one specimen. `x-killer.exe`, a stranger's tool
+from 1999 whose help dialog writes out all sixteen types, has `"2" : ??`.
 
 ### Type 3 - 8-bit write
 
@@ -695,9 +705,10 @@ Thirteen consecutive weapon slots, four bytes apart, all set to 0x30.
 ### Type C - nothing
 
 No handler in any firmware and no route in the cipher's jump table, so type C
-lines are stored and read back verbatim. In the databases they are filler: the
-information is in the *cheat name*, and the code line only exists because a cheat
-entry needs at least one.
+lines are stored and read back verbatim - which is exactly what makes it useful
+as a type that does nothing. The 27 lines in the databases are three different
+uses of that. Most of them are filler: the information is in the *cheat name*,
+and the code line only exists because a cheat entry needs at least one.
 
 ```
 Xplorer Pro 2.20 UK | Nuclear Strike | *****ISLAND STRIKE*****
@@ -709,11 +720,11 @@ Xploder V2 2.004 US | Wipeout  |  Turbo Level 1
     8013C5BA FF09
 ```
 
-The Wipeout pair is the most suggestive specimen: as *stored*, the two lines
-share their three ciphertext address bytes and differ only in the type nibble
-and the last byte. That is consistent with a code commented out by changing its
-type to one nothing implements, but the last byte differs too, so it is not the
-same code with only its type changed.
+The Wipeout pair is not filler at all: it is a code switched off by giving it a
+type nothing implements, with its ciphertext left intact. The two stored lines
+share their three ciphertext address bytes and differ in the type nibble and the
+last byte, and putting an `8` back in that nibble and decrypting settles what the
+difference is - see the end of this section.
 
 The Japanese Pro database uses type C for something else entirely - joker codes:
 
@@ -734,10 +745,32 @@ Those values decode exactly as PlayStation pad masks, active low: `0xB7FF` is
 and the cheat names say R1+×, R2+× and up+R1+×. The type C line is a
 button test guarding the write below it, in the shape of a type 7 conditional.
 
-None of the nine firmwares implements it. On these cartridges the guard is
-skipped and the write below it happens unconditionally. Whether the codes came
-from a build we do not have, from FCD's PC tooling, or from another device
-entirely, the corpus cannot say. Uses: 27.
+None of the nine firmwares implements it - nor the tenth, nor any classifier
+outside the engine in any of them (`typecx.py`). On these cartridges the guard
+is skipped and the write below it happens unconditionally.
+
+Three things `typecx.py` settles about the 27 lines. **The Wipeout pair is a
+disabled code, and the ciphertext proves it**: put an `8` back in the type nibble
+of `C6671C0E 505A` and decrypt with key 6, which its own flag nibble declares,
+and out comes `8013C5BA FF00` - the address of the type 8 line below it exactly,
+value `FF00` where the live one writes `FF09`. Four for four across the four
+Wipeout entries. **The filler lines are one line copied and edited**: all
+seventeen of them read `CD E?`, in three databases, so they are a habit rather
+than seventeen decisions. **And the Japanese joker masks are not FCD's.**
+`XLink.exe` prints its own "PlayStation Joypad Values" table, and that table is
+the pad halfword *byte-swapped* - `FFFE` is L2, `FEFF` is Select, every entry the
+hardware bit plus eight. The Japanese type C values decode the other
+way round: `C0007572 FFFE` is the cheat `セレクトボタンでカギGET！`
+("get the key with SELECT") and `C0007572 FEFF` is `L2ボタンでカギ消える！`.
+Six for six under the raw hardware layout, none out of six under FCD's. The
+same database tests the pad FCD's way five times over, with type 7 and the
+*active-high* masks straight out of that table - `L1` is `0004`, `L2+R2` is
+`0003` - so the type C codes and the type 7 codes in one database came from two
+different hands. Which is what the `(X-T用)` / `(X-Tのみ)` ("for X-T" / "X-T
+only") markers elsewhere in that database are for: it was compiled from a code
+list that covered more than this cartridge.
+
+Uses: 27.
 
 ### Type D - single anchor code
 
@@ -1533,7 +1566,11 @@ listed as `(constant not resolved)` rather than dropped, so the gap is visible.
 "Nothing looks at 1, 2 or C" is therefore the reading of the evidence, not a
 result the scan proves. What makes it a good reading is that the union does not
 move: at four window sizes, resolving 67 to 81 of the 124 occurrences across the
-corpus, it is `5 6 7 9 A D F` every time.
+corpus, it is `5 6 7 9 A D F` every time. `typecx.py` widens it from one idiom to
+three - this one, `srl rX, rY, 0x1C` (which is how the engine itself does it) and
+`andi rX, rY, 0xF000` - over ten images. The union grows to `3 4 5 6 7 8 9 A B D
+E F`, because the three images that keep the engine inside the packed firmware
+now contribute the dispatch chain too. It still contains no 2 and no C.
 
 What the staging passes do with them - **read, not executed**: the emulator is
 fed staged output, so everything in this section is a disassembly conclusion in a
@@ -1578,20 +1615,23 @@ given:
   that line as data through `$a0`, but the loop still advances by only eight
   bytes, so the line is dispatched on its own afterwards - giving it a type with
   no handler is what stops it running twice.
-* **type C is two different conventions.** In the UK and USA databases it is
-  filler, carrying no information at all (the cheat *name* is the message:
-  `*****ISLAND STRIKE*****`, `ALWAYS ACTIVATE THE NEXT ONE`). The Wipeout pair in
-  the USA database is a type C line and a type 8 line whose stored forms share
-  their three address bytes - related, though not the same code with only its
-  type changed, since the last byte differs too. But in the Japanese Pro database
-  type C is a joker code, and the values decode exactly as pad masks: `0xB7FF` is
-  `~(R1 | cross)`, `0xBDFF` is `~(R2 | cross)`, `0xB7EF` is `~(R1 | cross | up)`,
-  and the cheat names say R1+×, R2+× and up+R1+×. No firmware in the corpus
-  implements it, so those guards are skipped and the writes below them are
-  unconditional.
+* **type C is three different conventions** (`typecx.py` sorts all 27 lines by
+  what they are rather than by which database they are in). Seventeen are filler,
+  carrying no information at all - the cheat *name* is the message
+  (`*****ISLAND STRIKE*****`, `ALWAYS ACTIVATE THE NEXT ONE`) - and all seventeen
+  begin `CD E?`, so they are one line copied and edited. Four are the Wipeout
+  entries in the USA database, and those are *disabled type 8 codes*: put the
+  `8` back in the type nibble, decrypt with the key the flag nibble declares, and
+  the address is the address of the type 8 line below it, four times out of four.
+  And six are Japanese joker codes whose values decode exactly as pad masks:
+  `0xB7FF` is `~(R1 | cross)`, `0xBDFF` is `~(R2 | cross)`, `0xB7EF` is
+  `~(R1 | cross | up)`, and the cheat names say R1+×, R2+× and up+R1+×. No
+  firmware in the corpus implements it, so those guards are skipped and the
+  writes below them are unconditional.
 * **types 2, A and E appear nowhere in the recovered corpus.** E works; A works,
   through staging. Nothing in nine firmwares or five databases says what 2 was
-  for.
+  for - nor in the tenth firmware and sixth database `typecx.py` adds, which is
+  2,244 more code lines and still not one.
 
 ## 15. Stop reading it, run it
 
@@ -1662,12 +1702,51 @@ two agreeing is what makes either believable.
 
 ## 16. What this does not settle
 
-* **Type 2.** No handler, no route, no specimen, no reference in any staging
-  path. Nothing here says what it was for, or whether it ever was anything.
-* **Type C on the Japanese Pro.** The codes are unambiguous - they are joker
-  codes and the masks decode - but no firmware in the corpus runs them. A build
-  we do not have, FCD's PC tooling, or an import from another device are all
-  consistent with what is here.
+* **Type 2.** Narrowed as far as absence can be narrowed, and no further
+  (`typecx.py`). Ten firmwares, three classifier idioms, six databases, 17,183
+  code lines, four PC binaries and a contemporary third party's own type list:
+  no handler, no classifier, no route, no specimen, `"2" : ??`. It reads as an
+  unused opcode rather than a lost feature, and the likely reason it exists as a
+  nibble at all is that the Xplorer shares its 16-way type space with the Datel
+  GameShark, where `20`/`21` are 8-bit increment/decrement (web: psx-spx, which
+  partitions the first digit as "1,2,C,D,E = Gameshark; 4,6,7,9,B,F = Xplorer").
+  The Xplorer implements its own quadrant and leaves the GameShark-only nibbles
+  dead - type 2 among them. Only FCD documentation, the X-Link PRO / v1.10 that
+  `pc/RelNotes.txt` promises, or a database nobody here has would turn "unused"
+  into a fact.
+* **Type C on the Japanese Pro.** Two of the three explanations are now ruled
+  out and the third is unchanged (`typecx.py`, and type C above). *Not FCD's PC
+  tooling*: the Advanced Code Generator's Joker in `XLink.exe` emits a type 7 or
+  type 9 guard over a type 3 write and never a type C, and the masks it
+  documents are byte-swapped where the Japanese ones are not. *Not the
+  X-Terminator*: that is this cartridge, under its Japanese name (below). What is
+  left is a hand that was not FCD's, working to a specification in which C is an
+  equality guard - and that specification was the general belief of the period.
+  Every contemporary write-up of the Xplorer format (web sources: the "Advanced
+  Xplorer Codes" FAQ, May 2000; Hackman's in-depth FAQ, June 2000; GS Central's
+  compatibility table) documents type C as an if-then conditional carried over
+  "for Action Replay / Datel compatibility" - and the GameHacking wiki, testing
+  it, reports "in no cases did those types work", which is exactly what the
+  firmware says: no handler, so the guard is skipped. `x-killer.exe` (1999) has
+  the same "supported - Datel code, obsolete". So a code author in 1998-99 had
+  every reason to write a type C button guard and no way to discover on this
+  hardware that it does nothing. Whose code list it came from, and whether any
+  build ever ran type C, the corpus still cannot say.
+* **The X-Terminator is not another device.** `pc/RelNotes.txt` names it beside
+  the Xplorer and reads like a second product, and `XLink.exe` really does carry
+  a second saved-codes banner for it. It is the Japanese name of this cartridge:
+  the packed firmware carries seven brand strings, in the same seven places in
+  every language, reading Xplorer (UK) / Xploder (DE) / X-Terminator (JP), and
+  the Japanese UI says "X-Terminator plug-in CD" exactly where the UK one says
+  "Xplorer Plugin CD`s". Independently confirmed off-corpus (web: psx-spx lists
+  "Xploder (Germany/USA) / Xplorer (England/Spain/Netherlands) / X-Terminator
+  (Japan)" as one device; Gametech's own site shipped its firmware as `xtjap.fcd`
+  flashed with X-Link, and its release numbers - 2.005, 2.006, 3.18 Pro, 4.55
+  Pro - interleave with the corpus here). In `XLink.exe` the whole X-Terminator branch is a name
+  and a contact address behind a predicate whose entire body is `xor eax, eax;
+  ret`. `X-Assist`, which both Pro firmwares detect by a `WHB!` magic at PSX RAM
+  `0x38` and import from, is FCD's own PSX-side helper and hands over an address
+  and a 16-bit value with no type nibble at all.
 * **What the console does with a bad address.** §7 is executed, but against a
   memory map, not a PlayStation. That the engine dereferences `0x0802A798` is
   now observed; what an R3000 does about it is not.

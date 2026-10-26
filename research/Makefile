@@ -11,6 +11,7 @@
 #   make roundtrip  ... and against itself, over every recovered database code
 #   make encrypt    the encrypt side, against the vendor's own encrypter
 #   make fcd        the .fcd image cipher against the PC tools' own routines
+#   make comms      the X-Link parallel-port protocol, PC and cartridge ends
 #   make firmware   the nine firmwares agree with each other
 #   make engine     the code engine, executed out of all nine images
 #   make tables     the published tables, regenerated
@@ -19,6 +20,7 @@
 #   make strict     the C builds under the strict warning set
 #   make sanitize   ... and runs clean under ASan/UBSan
 #   make fuzz       ... and on malformed ROMs too: `-x` against generated images
+#   make typecx     ENGINE.md 16's two open questions: type 2 and type C
 #
 # The ROM images are cartridge firmware dumps and are not in the repo (see
 # research/.gitignore).  Drop them in roms/ to enable the targets that need
@@ -59,8 +61,8 @@ ifeq ($(ROMS),)
 need_roms = @echo '  skipped: no roms/ - drop the firmware dumps in and re-run'
 endif
 
-.PHONY: all check crypto blocks oracle extract roundtrip encrypt fcd firmware engine \
-	tables analyses strict sanitize fuzz clean
+.PHONY: all check crypto blocks oracle extract roundtrip encrypt fcd comms firmware engine \
+	tables analyses plugin prechain rom2005 payloads typecx selfdestruct strict sanitize fuzz clean
 
 # Every C target builds the *same* objects and binary in the parent directory,
 # with different flags - `strict` twice over, `sanitize` with the sanitizers,
@@ -72,8 +74,8 @@ endif
 
 all: check
 
-check: strict sanitize fuzz oracle extract roundtrip encrypt fcd firmware engine \
-	tables analyses
+check: strict sanitize fuzz oracle extract roundtrip encrypt fcd comms firmware engine \
+	tables analyses plugin prechain rom2005 payloads typecx selfdestruct
 	@echo
 	@echo 'all suites passed'
 
@@ -174,6 +176,15 @@ fcd:
 	@$(PY) fcdcrypt.py
 	@$(P) $(PYEMU) xlink.py | tail -2
 
+# The X-Link parallel-port protocol, both ends: the PC's byte primitives and
+# command opcodes out of XLink.exe, the cartridge's dispatcher and jump table
+# out of every firmware, the opcodes matched across the wire, and the 512 KB
+# flash-read question.  Runs on whichever of pc/ and roms/ are present.  See
+# comms.py's header.  Check it still bites:  make comms PYCS=false   must fail.
+comms:
+	@echo '== the X-Link comms protocol, both ends =='
+	@$(P) $(PYCS) comms.py | tail -3
+
 # Do the nine firmwares implement the same cipher?  Runs each one's routines
 # against the others over every key setting.
 firmware:
@@ -223,6 +234,70 @@ ifneq ($(ROMS),)
 	@$(P) $(PY) escrank.py | tail -1
 	@$(P) $(PY) defaultoff.py | grep 'wrong address'
 endif
+
+# The FCDEXE1138 loader: every firmware runs an unsigned executable from a
+# memory-card save.  plugin.py finds the one reference to the filename in each
+# image and walks the routine to the jalr, asserting the file-header offsets it
+# trusts (load address at +0x44, block count at +0x03) and that the path from
+# read to execute is straight-line - nothing checks the bytes.  Runs on the
+# tenth image (pc/ROMS) even with roms/ empty; skips only if no image is present.
+# What lies between the packed firmware and the record chains (nothing lost -
+# pad, erased flash, the support module, and the FX database container), and the
+# tenth image, release 2.005: the one whose database `-x` cannot read because a
+# single game record declares zero cheats.  Both need firmware dumps; rom2005
+# also needs the 2.005 image bundled under pc/ROMS/.
+prechain:
+	@echo '== in front of the record chains =='
+	$(need_roms)
+ifneq ($(ROMS),)
+	@$(P) $(PYCS) prechain.py | tail -1
+endif
+
+rom2005:
+	@echo '== release 2.005, the tenth image =='
+ifeq ($(wildcard pc/ROMS/Xteng.fcd),)
+	@echo '  skipped: no pc/ROMS/Xteng.fcd'
+else
+	@$(MAKE) -C $(ROOT) >/dev/null
+	@$(P) $(PYCS) rom2005.py | tail -1
+endif
+
+# The actual contents of the shipped Supercode/Megacode/type-A blocks,
+# disassembled: what each embedded program does, which ten of the 65 blocks are
+# corrupt as shipped (payload rows re-enciphered as if they were ordinary
+# codes), and that XLink.exe carries the generators' assembled templates.
+payloads:
+	@echo '== the shipped block payloads, disassembled =='
+	@$(MAKE) -C $(ROOT) >/dev/null
+	$(need_roms)
+ifneq ($(ROMS),)
+	@$(P) $(PYCS) payloads.py | tail -1
+endif
+
+# The anti-tamper self-destruct, executed (not read): each image's real decrypt
+# routine run under fwemu.py with the checker left LIVE and the cartridge modelled
+# as the Atmel AT29C flash part it is.  Nine of ten images program 96 KB of PSX
+# RAM over their own flash on a header mismatch; release 2.14 does it on a stock,
+# unmodified cartridge (its check string predates its own database header).
+selfdestruct:
+	@echo '== the self-brick, executed under a flash model =='
+	$(need_roms)
+ifneq ($(ROMS),)
+	@$(P) $(PYCS) selfdestruct.py | tail -1
+endif
+
+plugin:
+	@echo '== the FCDEXE1138 memory-card code loader =='
+	@$(PYCS) plugin.py
+
+# ENGINE.md 16's two open questions - what type 2 was and where the Japanese
+# type C joker codes came from.  Ten images (the nine in roms/ plus the 2.005
+# the DOS tool ships), six databases, the type C specimens decoded three ways,
+# and FCD's own joypad table and joker generator read out of XLink.exe.  Skips
+# its corpus-wide counts, loudly, when roms/ or pc/ is incomplete.
+typecx:
+	@echo '== type 2 and type C =='
+	@$(PYCS) typecx.py
 
 clean:
 	@$(RM) sanitize.out sanitize.err
