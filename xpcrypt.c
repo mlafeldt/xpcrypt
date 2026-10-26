@@ -26,7 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
-#include "xp_crypto.h"
+#include "crypto.h"
 
 /* Application's name and current version */
 #define APP_NAME	"xpcrypt"

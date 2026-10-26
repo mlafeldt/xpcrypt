@@ -1,5 +1,5 @@
 /*
- * xp_crypto.c - Cryptographic functions for Xploder PSX
+ * crypto.c - Cryptographic functions for Xploder PSX
  *
  * Copyright (C) 2007, 2009 misfire <misfire@xploderfreax.de>
  * All rights reserved.
@@ -22,7 +22,7 @@
 
 #include <stdlib.h> /* for NULL */
 #include <string.h>
-#include "xp_crypto.h"
+#include "crypto.h"
 
 /*
  * This is a code converter, not an emulator of the cartridge. Every cipher

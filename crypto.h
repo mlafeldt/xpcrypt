@@ -1,5 +1,5 @@
 /*
- * xp_crypto.h - Cryptographic functions for Xploder PSX
+ * crypto.h - Cryptographic functions for Xploder PSX
  *
  * Copyright (C) 2007, 2009 misfire <misfire@xploderfreax.de>
  * All rights reserved.
