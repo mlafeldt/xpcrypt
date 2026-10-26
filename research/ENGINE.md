@@ -61,6 +61,44 @@ default-off bit survives decryption for any code stored with key nibble 0, and
 the engine's address mask keeps it - so the address gains `0x08000000`. Executed
 on both halves (§7).
 
+> **Ninth pass (`AUDIT.md`): staging pass 4 rewrites codes, and that overturns
+> finding 2 and the type C, D and E sections.** After decrypting each line with key −1,
+> pass 4 calls a normaliser, its only caller (`xteng` `0x1AA9EC` decrypt, then
+> `0x1AA9F8` → `0x1A835C`). It exists in all ten images (V2 `0x1A7E40`-`0x1A9978`, FX
+> `0x80031C08`-`0x80032398`), and all ten give the same output under emulation.
+> Matching on the whole first byte, it does this:
+> * `C0`, `D0` and `70` become `70`, with the address forced even;
+> * `30` at an odd address becomes `E0` at address − 1;
+> * `80` at an odd address becomes `30`, and so `E0`;
+> * `00` at a misaligned address becomes `80`;
+> * `B0` gets bit 0 of byte 3 cleared.
+>
+> What that changes:
+> * A `C0` line is a working **equality guard** on every cartridge. Only
+>   `CD`/`C6`/`C8` are inert, and every shipped filler or disabled line is one of
+>   those. Under emulated staging, 2.14's jokers `C006A2EA B7FF` and
+>   `C0007572 FFFE` become `70…` guards.
+> * A `D0` that is not hoisted to F (two or more D lines, or a D beside an F)
+>   becomes type 7, not an inert D.
+> * Type E *is* used, by staging: it emits 1,156 E codes for the five
+>   databases (1,093 odd-address type 3, 63 odd-address type 8).
+>
+> So three of the four types with no cipher route (A→5, C0→7, E generated) are
+> exactly staging's types, and "designed independently" (§7) does not survive. The
+> likely reason is that the engine reads addresses with `lhu`, which traps on an odd
+> address. That is an inference from the MIPS I spec, not observed. The idiom scans
+> of §13 cannot see whole-byte compares, the gap `AUDIT.md`'s post-fix review warned
+> about. Staging *was* executed in this pass (Ghidra's emulator on 2.008, Pro 2.14
+> and FX 3.20, plus the normaliser under unicorn in all ten), so "never executed"
+> (§16) is out of date. Further executed results: a second enabled Megacode wrecks
+> the whole list. Pass 1 stops after the first, and the second's mask row is hoisted
+> as an F anchor, decrypted as key 7, which runs the copyright check on the way. The
+> malformed MGS record swallows the three cheats enabled after it and builds a
+> 13,816-word copy over kernel RAM from `0xA0000040`. FX also clears DCIC on *every*
+> B() call (`mtc0 $zero, $7` in a delay slot at `0xA04`), a difference
+> `engineemu.py` filters out of its traces. The §4 "Uses:" counts are the
+> pre-correction ones. §8's are right: type 1 134, 3 2988, 7 589, 8 10689, F 245.
+
 
 # Part I - what the engine is
 

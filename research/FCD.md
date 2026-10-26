@@ -128,9 +128,11 @@ unpacked image; all nine are the same shape):
   or 0x100-byte pages depending on the device. **No transform.**
 * It has six callers. Three pass literal addresses in the cheat-database region -
   `0x1F022600` twice (0x10 and 0x900 bytes) and `0x1F025000` once (0x1AFFC bytes,
-  the database itself); two take the destination from a register and are
-  read-modify-write of a single flash page. The one remaining caller passes the
-  base of the firmware, `0x1F000000`: `0x1A1B80`.
+  the database itself); one takes the destination from a register and is a
+  read-modify-write of a single flash page. Two pass the base of the firmware,
+  `0x1F000000`: `0x1A1B80`, below, and `0x1A4698`, which is the self-destruct of
+  `FINDINGS.md` §5.3b, `flash_write(0x3E8, 0x1F000000, 0x18000)` (ninth pass; this
+  used to count it as a page read-modify-write).
 * That caller is the link command dispatcher. It reads a command byte, and on
   `'U'` (0x55) programs the received buffer over the firmware and answers `"OK"`
   or `"OF"`. The receive loop above it is:

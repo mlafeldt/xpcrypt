@@ -115,7 +115,8 @@ the stored format, but a syntactically valid decrypted code can still be inert,
 target-specific or dangerous when the cartridge executes it. Add an opt-in
 `--check`/`--lint` mode that reports the facts the firmware corpus establishes:
 
-* type C has no handler in any of the nine recovered engines;
+* ~~type C has no handler in any of the nine recovered engines~~ - ninth pass: staging
+  rewrites `C0` (and an unhoisted `D0`) into type 7, so only `CD`/`C6`/`C8` are inert;
 * type 4 works on V2/Pro and is inert on FX, when the user supplies a target;
 * type D is promoted to a global type F anchor only when exactly one is selected;
 * a type B slide performs halfword stores, so an odd start address or address
@@ -171,7 +172,9 @@ program 96 KB over their own flash if it does not match (`FINDINGS.md` §5.3b,
 `REVERSING.md` §11; `fxprot.py` locates it in any ROM).
 
 Read `*(u32 *)(rom + 0x7C)`, compare the target bytes against the masked string,
-warn loudly on mismatch. About 30 lines. Rank it above 2 if anyone actually
+warn loudly on mismatch. About 30 lines. Mind that a stock Pro 2.14 image already
+mismatches (its header says `1997-9`, its checker `1997/8`; ninth pass), and that the
+V2 checker compares 14 characters, not 13. Rank it above 2 if anyone actually
 reflashes carts — the downside it prevents is destroyed hardware.
 
 ### ~~4. Header guard in `crypt_codes()`~~ — done, `7d15818`
@@ -180,6 +183,13 @@ A header that failed to decrypt still started a block and swallowed the followin
 lines as payload. Fixed; `FINDINGS.md` §6.5 has the detail.
 
 ### ~~5. Split `xpcrypt.c` by behavior~~ - done
+
+> **Ninth pass (`AUDIT.md`): done on the `module-split` branch only (`fed8a70`).**
+> That branch is not merged into `main` or `research`. Here `xpcrypt.c` is still the
+> 873-line monolith beside `xp_crypto.c`/`xp_crypto.h`, the root `Makefile` has no
+> `test` target, and there are no C tests. The branch forks from `854c1e1`, before
+> the empty-game fix (`7070614`), and its `db.c` still returns −1 on a zero-cheat
+> game. Merging it as it stands would bring back the 2.005 regression in `TENTH.md`.
 
 `xpcrypt.c` is now the 165-line composition root for CLI policy and dispatch.
 The behavior it formerly combined lives behind the four interfaces proposed in
@@ -240,6 +250,12 @@ triggers the self-destruct check on V2 firmware.
 
 ### FX flash-region / database tooling
 
+> **Ninth pass: the premise is gone.** The shipped FX databases are in the four FX
+> dumps, LZW-packed behind `*(ROM+0x7C)+0xB8` (`FINDINGS.md` §6.3). So `-x` for FX
+> is feasible: one container header plus a 14-bit LZW decoder in front of the existing
+> record walker. Both Xlink95 builds also read the full 512 KB into `ROMS\BackUp.FCD`
+> during an upgrade, so FCD's own tool made full 512 KB dumps.
+
 The FX keeps codes in flash above the firmware, in a region ending at
 `0x1F080000`. No dump we have or could find reaches it (`FINDINGS.md` §6.3) —
 that covers the four FX images here and everything downloadable we looked at, not
@@ -256,7 +272,9 @@ generations, three languages. Settled.
 
 ## Housekeeping
 
-* ~~Version bump and a `README` history entry~~ - done with `-x`.
+* ~~Version bump and a `README` history entry~~ - done with `-x`. **Not on this
+  branch (ninth pass):** `APP_VERSION` is still `"1.1"` and the README history ends
+  at v1.1 (2009), as `FINDINGS.md` §6.7 says.
 * ~~The `Makefile` passes `-s`, which clang rejects under `-Werror`~~ — done; the
   binary is stripped by `install -s` now (`FINDINGS.md` §1).
 * ~~The repo has a plain `TODO` with two lines~~ — removed in `dc66a3b`. Its

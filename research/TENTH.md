@@ -56,7 +56,7 @@ The header layout is worth recording because nothing else here does. Byte `+0x30
 is a **territory code** — `E`/`G`/`J`/`U` for English/German/Japanese/USA across
 the corpus — which is what `XLink.exe`'s "Cannot change cartridge territories!
 (Use %s ROMS only)" enforces and what `RelNotes.txt` means by "you must upload an
-equal territory". The self-destruct compares only the first 13 bytes,
+equal territory". The self-destruct compares only the first 14 bytes,
 `(C) 1997/8 FCD`, so it guards neither the version string nor the territory byte.
 
 ### Cipher and protection are the V2 build's, exactly
@@ -86,9 +86,9 @@ chain begins at `0x25000` and parses cleanly to its `FF FF FF FF` terminator at
 `0x2FF66` — **except** the parser never gets there. Game 112 is:
 
 ```
-0002A8C6  4d 6f 74 6f 20 52 61 63 65 72 20 32 00 00        "Moto Racer 2" 00 | 00
+0002A8C5  4d 6f 74 6f 20 52 61 63 65 72 20 32 00 00        "Moto Racer 2" 00 | 00
                                                  ^^ name    ^^ terminator  ^^ cheatCount = 0
-0002A8D4  4d 6f 74 6f 20 52 61 63 65 72 00 04            "Moto Racer" 00 | 04  (the next game)
+0002A8D3  4d 6f 74 6f 20 52 61 63 65 72 00 04            "Moto Racer" 00 | 04  (the next game)
 ```
 
 An empty game: a name, a cheat count of zero, and then the next game. The chain
@@ -112,8 +112,10 @@ found*. One empty game costs all 233.
 ### What is actually there
 
 A zero-cheat-tolerant parser (skip the empty game, keep going) recovers the whole
-chain, and the codes are real: where 2.005 and 2.008 share a game the decrypted
-codes are byte-identical.
+chain, and the codes are real. Where 2.005 and 2.008 share a game the decrypted
+codes are mostly identical: 208 of the 223 shared game names match exactly, and 15
+differ (Nuclear Strike goes from 9 to 91 cheats, for example). Tekken 3 is one of
+the 208 (ninth pass, `AUDIT.md`).
 
 ```
                      strict            tolerant
@@ -175,9 +177,19 @@ original 15349 lines / 11718 cheats.
   audited count comes from `defaultoff.py`, which is block-aware and uses a
   cross-database matching rule, and it cannot see 2.005 until the extractor above
   is fixed. Re-run it over the six databases before believing any number.
-* **The image never entered the suites.** With the fix and a copy in `roms/`,
-  `dbtypes.py`, `engine.py`, `engineemu.py`, `oracle_test.py` and `roundtrip.py`
-  all have a tenth, earlier image to widen over.
+  **Settled in the ninth pass (`AUDIT.md`): no.** 2.005 has 119 rows stored with
+  bit 3, and all of them are keyed (stored `3E`/`4E`/`7E`/`8E`), so every one loses
+  the bit on decryption. Pro 2.20 is still the first V2 database with keyless
+  default-off rows. The hazard is not confined to it, though: the FX 3.20 and 4.52
+  databases (`FINDINGS.md` §6.3) each carry 112 keyless default-off rows.
+* **Is an empty game deliberate?** Probably a placeholder. 2.008 fills `Moto Racer 2`
+  with 7 cheats, and the German FX 4.50 database ships five zero-cheat records on
+  purpose, as a legend ("Abkuerzungen", "ENG = Energie", …). How the menu shows
+  them is still unread.
+* **The image never entered the suites.** Partly stale: `payloads.py`, `plugin.py`,
+  `typecx.py`, `selfdestruct.py` and `rom2005.py` use it now. `dbtypes.py`,
+  `engine.py`, `engineemu.py`, `oracle_test.py`, `roundtrip.py`, `fxtest.py` and
+  `fxprot.py` still do not.
 
 ## 5. Reproducing
 
@@ -188,5 +200,5 @@ grep -a 'release' /tmp/xteng-2005.dec | head -1     # -> release 2.005
 xpcrypt -x /tmp/xteng-2005.dec                        # -> 233 games (was: Error, before §3)
 
 # the empty game
-xxd -s 0x2a8c6 -l 24 /tmp/xteng-2005.dec             # "Moto Racer 2" 00 00 "Moto Racer" 00 04
+xxd -s 0x2a8c5 -l 24 /tmp/xteng-2005.dec             # "Moto Racer 2" 00 00 "Moto Racer" 00 04
 ```

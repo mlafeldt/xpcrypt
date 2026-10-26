@@ -15,6 +15,33 @@ menu firmware, and it hands the console to whatever is on the card.
 Reproduce it:  `uv run --with capstone python plugin.py`  (a `make plugin`
 target runs it in the gate).
 
+> **Ninth pass (`AUDIT.md`): it is FCD's advertised memory-card *upgrade*, not a
+> hidden door.** V2 2.008's caller (`0x1B76E0`) draws a "CD & Memory Card Upgrade"
+> screen with "Press @s to upgrade via Memory Card." and "Couldnt upgrade via
+> MemoryCard!". FX has an "Upgrade Via Memory-Card" menu item, draws "Loading
+> Upgrade", and fails with "Failed to find memorycard upgrade / Please use official
+> FCD expansion memory-cards only". So it is not silent on FX, and "nothing else had
+> noticed it" describes this research, not the product. The finding that stands is
+> that the upgrade is **unauthenticated**. Corrections to the listing below:
+> * the call labelled "seek/rewind" is `FileSeek(fd, 0x200, SEEK_SET)` in all ten
+>   images, so the payload really does start at file offset `0x200`;
+> * the first fd is closed (`0x1A08D4`) before the second open, so it is not leaked.
+>   The listing also omits a `memset` and an unused `malloc(0x300)`/`free` pair;
+> * "read failed ? bail" is a `beqz`, but `FileRead` returns −1 on error, so a
+>   failed read goes on with an uninitialised header and jumps to whatever it holds;
+> * the "one-shot re-entry flag" gates only the one-time card BIOS init (`InitCard`,
+>   `StartCard`, `_bu_init`, `set_card_auto_format`). The loader runs on every
+>   Square press;
+> * the structure is not identical: Pro 2.14/2.20 hang (`j .`) on an empty header
+>   read; FX has no `malloc`/`free` and masks interrupts (`I_MASK = 0`) if the
+>   payload returns;
+> * offset `0x03` as a "standard block count" is unsupported: psx-spx lists it as
+>   uncertain. "1138 = THX-1138" and "FCDEXE = FCD executable" are guesses.
+>
+> The cart's X-Link command `'X'` is a second unauthenticated path: it receives a
+> block to a wire-given address and jumps into it (`jalr $fp` at `0x1A1B2C` in
+> `xteng`).
+
 ## The four findings that matter
 
 1. **`bu00:FCDEXE1138` is loaded and executed with no validation.** The routine

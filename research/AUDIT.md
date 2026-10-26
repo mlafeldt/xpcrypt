@@ -1,11 +1,394 @@
 # Audit of the Xploder research notes
 
-Audit dates: 2026-07-28 through 2026-07-30.
+Audit dates: 2026-07-28 through 2026-07-30, and 2026-10-26.
 
-> **Current status:** eight passes. The extraction pass resolves the former
-> suffix-only database scope and revalidates every derived count over 15,349
-> lines. Special32/Special33 remain a documented product-scope exclusion. The
-> older sections and their 13,205-line figures are preserved as history.
+> **Current status:** nine passes. The ninth (2026-10-26) is the first to cover the
+> material added after the eighth: `TENTH.md`, `PLUGIN.md`, `N64.md`, `ENCRYPT.md`,
+> `FCD.md` and the later scripts. It is also the first to re-derive the firmware
+> claims with independent tooling rather than the repo's own. It overturns three
+> headline conclusions (FX databases, type C/D/E, the N64 ciphers). Its corrections to
+> the notes are applied as marked callouts; **nothing in the C source or the scripts was
+> changed**, so the script and code findings below are open. The older sections are
+> history.
+
+## Ninth pass: deep review against the binaries - 2026-10-26
+
+### Scope and standard of evidence
+
+Every note in this directory, re-checked against the ten images (the nine in `roms/`
+plus 2.005 from `pc/ROMS/Xteng.fcd`), the four PC binaries and, for `N64.md`/
+`ADVANCED_EXPLORER_CODES.md`, the cited public sources. The rule was independence. The
+repo's scripts were re-run only as a reproducibility check, and every conclusion below
+rests on one of these:
+
+* **Own decoders.** COMP01, the FX descrambler, the LE loader (6,030 fixups), a
+  database reader and a 14-bit LZW decoder, all written from the disassembly. The
+  COMP01 decoder and descrambler reproduce all ten unpacked images byte for byte.
+* **Decompilation.** Ghidra 12.1.4 headless on the raw MIPS images, and REA's Ghidra
+  provider on the PE/LE tools.
+* **Disassembly.** rizin and capstone.
+* **Execution.** Unicorn harnesses, not `fwemu.py`. Each image's real decrypt routine
+  ran 9,216 cases with key −1 and payload keys 0-15. The checker ran live. The FX
+  LZW decompressor ran out of the firmware. The vendor's encrypters ran against
+  `xpcrypt -e`. The staging passes ran in Ghidra's emulator, and the pass-4
+  normaliser ran in all ten images.
+
+Findings that change a published conclusion were spot-checked a second time by hand
+before being written in.
+
+### Bottom line
+
+The cipher work stands. The decrypt routine, the route table (`0xABFB` in all ten
+images), the payload keys, the image cipher and the vendor's encrypter all agree
+with xpcrypt case for case:
+
+* 9,216 decrypts per image;
+* 8,000 codes plus 1,000 payload rows through the DOS encrypter;
+* 4,000 runs through X-Killer;
+* all eight image-cipher routines at lengths 20-4099.
+
+Three headline conclusions do not stand:
+
+1. **The FX databases are in the dumps.** `FINDINGS.md` §6.3 is wrong. Each FX image
+   points at an LZW-packed record chain from `*(ROM+0x7C)+0xB8`. The format is an
+   8-byte header (packed and unpacked size), then 14-bit MSB-first codes starting at
+   256, with end code `0x3FFF` and no clear code. The firmware's own decompressor at
+   `0x80025E80` (executed) and two independent decoders give byte-identical output of
+   exactly the declared size, ending `FF FF FF FF`. The counts are:
+   * 3.20: 265 records / 1,922 cheats / 2,825 lines;
+   * 4.52: 264 / 1,921 / 2,823, the same database in both dumps;
+   * 4.50: 269 records (5 of them empty) / 2,071 / 2,957.
+
+   The `0x1F07FFF8` region is free flash above that database, reached through a bank
+   switch (`0x21` to `0x1F060001`, offsets ≥ `0x60000` read via
+   `0x1F040000-0x1F05FFFF`). It is not where the shipped codes live. The §6.3
+   formula's "firmware_end" is the container pointer, and its `n` is the packed size.
+   §10.5's `lui`-page method missed it because the database is reached through a
+   pointer slot.
+2. **Types C, D and E are shaped by staging.** `ENGINE.md` finding 2, the type C/D/E
+   sections, §13 and `FINDINGS.md` §7 are wrong. Pass 4 calls a normaliser after
+   every decrypt (`xteng` `0x1AA9F8` → `0x1A835C`, its only caller, present in all
+   ten images):
+   * `C0`, `D0` and `70` become `70`, with the address forced even;
+   * odd-address `30` and `80` become `E0`;
+   * misaligned `00` becomes `80`;
+   * `B0` gets bit 0 of byte 3 cleared.
+
+   So `C0` is a live equality guard and only `CD`/`C6`/`C8` are inert. An unhoisted
+   `D0` becomes type 7. E is generated 1,156 times for the five databases. "Designed
+   independently" fails: three of the four routeless types are exactly staging's.
+3. **The N64 shares both ciphers.** `N64.md` is wrong on two counts:
+   * the published N64 code cipher (hammerhead/kodewerx `DecryptCodeMethod2`) is PSX
+     key 6 on bytes 1-5, and `Method1` is the same function;
+   * X-Killer handles an "FCD N64 ROM - Encrypted" format with the PSX image cipher.
+
+   The "byte-identical" COMP01 block is the PSX block word-swapped.
+
+`make check` **fails at HEAD.** `rom2005.py` asserts the pre-fix behaviour that
+`7070614` removed: that `-x` fails on 2.005 and that `db2` rejects it. Make stops at
+the first failure, so `payloads`, `typecx` and `selfdestruct` never run under the gate.
+Run on their own, all three pass, and every other target passes. Each target still
+fails when its producer is replaced by `false`.
+
+### Firmware cipher, container, protection (`FINDINGS.md` §5, `REVERSING.md`)
+
+Confirmed independently:
+
+* COMP01 format, escapes and the `"Wayne Hugh"` header mask;
+* FX descrambler formula and seeds;
+* every decrypt route, including the `0xAA`-prefill answers;
+* the 120/48/4/72 split of the 244 entries;
+* the folded identities;
+* no encrypt routine in any image;
+* exactly two callees per decrypt;
+* the or-vs-add row-count bug in all ten (FX has two such sites);
+* the 59 name occurrences;
+* `romcrypt.py` over 87,040 cases;
+* `xp_crypto.c`, which departs from the firmware only by design (bit 3 kept;
+  Special32/33 copied).
+
+Not as published:
+
+* **Pro 2.14 bricks with no modification.** Its checker (`0x1A4E54`) compares
+  `"(C) 1997/8 FCD"` against its own header `"(C) 1997-9 FCD  "` and mismatches at
+  index 8. Executed: the first key-7 or Special32 code a user activates programs cart
+  `0x0-0x17FFF`. No row of the stock 2.14 database takes either route: all 1,826 rows
+  have low nibble 0. Only the Makefile and `selfdestruct.py` said so, and the Makefile
+  overstates it ("on a stock cartridge" without the trigger). *Callout applied:*
+  `FINDINGS.md` ⚠ note and §5.3b table.
+* **The V2 checker compares 14 characters, not 13.** Its `strlen` (`0x1A4410`) counts
+  the NUL. *Applied* in `FINDINGS.md` §5.3b and `TENTH.md` §1. Still open in
+  `REVERSING.md:1043`, the `fxprot.py:16` docstring, and `selfdestruct.py:331`
+  (`range(len-1)`).
+* **"Exactly one route" contradicts its own table.** V2 uses two (key 7 and
+  Special32), FX one (key 4). *Applied.*
+* **"Eight of the nine" is now nine of ten.** *Applied* in the ⚠ note.
+* **The recoverability premise was wrong.** FINDINGS said programming "only clears
+  bits", but the identified parts are page-write parts that erase first. *Applied.*
+  Open: `selfdestruct.py:100`'s "accepts exactly `0xD5`/`0xDA`/`0xA4`". After the
+  Atmel ID check the V2 probe (`0x1A3444`) also runs SST's alternate ID entry
+  (AA/55/80/AA/55/60). FX 4.50 and 4.52 accept a device `0xBA` too, and 4.50 a
+  byte-programmed Intel-style part. Chip names come from memory; no datasheet was
+  checked.
+* **The overwrite source.** `0x3E8-0x183E7` is kernel RAM only up to `0xFFFF`. On FX
+  the rest is the running firmware. `selfdestruct.py:46`'s "first 90-odd KB of the
+  packed firmware" holds for V2 only.
+* **The store-only re-pack is `0x2BFC8`, not `0x2BFAE`.** `packstats.py:66` counts the
+  136 escape tokens instead of the 162 escape-byte occurrences. The fix recorded in
+  the first audit did not hold. +33% stands. *Applied* in `FINDINGS.md`. Open:
+  `REVERSING.md:354`, `TODO.md:224`, `packstats.py`.
+* **english-452 is not "far less compressible".** zlib gives 0.563 against v452d's
+  0.562; FCD's encoder simply emitted 3,373 LZ tokens against 16,240. *Applied* in
+  `FINDINGS.md`. Open: `packstats.py:13`, `TODO.md:228`.
+* **english-452 and v452d are two 4.52 builds.** Their headers are dated
+  22/11/1999 and 05/11/1999, the unpacked sizes are `0x48284` and `0x4825C`, and the
+  code is relocated. They behave identically, and their databases are identical.
+  german-450's header carries a 1997 date.
+* **No German 0x1000 gap.** At the right base, the German routes follow the
+  dispatcher as in 2.008. The "second table set" is `lui`/`addiu` pairs naming debug
+  strings `0x1000` below the tables. *Applied* in `REVERSING.md` §10.6. Open: the
+  `fwemu.py:22`/`:250` comments and `fwimage.py:54`.
+* **Small slips** (open unless noted):
+  * "Punky Bear" is the Bust-A-Move 3DX Supercode (*applied* in `FINDINGS.md`; open
+    in `fxtest.py` and in AUDIT history);
+  * the USA decrypt entry is `0x801ABA78`;
+  * `0x1ACCC0`/`0x1ACD30`/`0x1ACE0C` are inside one function, `0x1ACC74`, which is
+    both the list walker and the Megacode stager;
+  * V2 inlines the shared tail only in key 7;
+  * fwemu is 294 lines, not "about 120";
+  * the descrambler needs only the low 3 bits of state, not all 32;
+  * the FX strncpy at `0x80012AA8` is 3.20's only;
+  * on Pro 2.20 the checker callee is emptied, not "compiled out";
+  * the notes mix the `0x801A…` and `0x001A…` bases. The loader enters
+    `0x801A0008`, but every absolute pointer is `0x001Axxxx`. Pick one convention
+    and say so.
+
+### Code engine (`ENGINE.md`, `FINDINGS.md` §7)
+
+Confirmed:
+
+* blob locations in all ten (2.005 is a fourth packed one, so 4 of 10);
+* the three SHA groups;
+* every handler body and the chain order;
+* type 4 absent on FX;
+* type 6's COP0 programming;
+* copy-before-test hangs on zero-length blocks;
+* the 0x80/0x88 shared copy route;
+* the 133/121/120/117 counts;
+* type 1 always the second line of a slide (134/134);
+* type C's 17/4/6 split.
+
+Not as published:
+
+* **The pass-4 normaliser** (Bottom line 2). *Callout applied* at the top of
+  `ENGINE.md`, in `FINDINGS.md` §7, in `ADVANCED_EXPLORER_CODES.md` (the FAQ's
+  type C claim is *right*) and in `TODO.md` 1e. Still open inside `ENGINE.md`:
+  * the type C section (748-750, 1730-1733);
+  * the type D section (808-811, 1584-1586);
+  * the type E section (834-837);
+  * 1268-1272;
+  * the §13 classifier scans (1559-1573);
+  * `typecx.py:17-20` and `:708-717`.
+* **A second enabled Megacode wrecks the list** (executed on 2.008). Pass 1 stops
+  after the first type 6. The second's mask row is hoisted as an F anchor
+  (`F01FE3C9 120F`) and decrypted as key 7, which runs the copyright check. The
+  second header goes in raw. "Room for exactly one Megacode" understates this.
+* **The malformed MGS record is worse than "malformed".** Executed: it swallows the
+  three cheats enabled after it and builds a 13,816-word copy over kernel RAM from
+  `0xA0000040`, the engine included.
+* **Overrunning Supercode rows are handled three ways.** V2 2.004-2.0081 and Pro 2.14
+  hang (`j .`, `xteng` `0x1AD270`). Pro 2.20 returns length `0x18`, because it
+  branches one instruction past `move v0,t2`. FX handles it. No shipped code
+  triggers it.
+* **"One difference" holds only by construction.** FX clears DCIC on *every* B()
+  call (`mtc0 $zero,$7` in the delay slot at `0xA04`, nop-ed by the installer when
+  `0x8000002F` is non-zero). `engineemu.py:263-267` deletes that write from its
+  traces.
+* **Stale counts.** The §4 "Uses:" counts predate the complete chains:
+  * type 1: 114, now 134;
+  * type 3: 2,681, now 2,988;
+  * type 5: 42, now 44;
+  * type 6: 9, now 11;
+  * type 7: 491, now 589;
+  * type 8: 9,062, now 10,689;
+  * type 9: 36, now 43;
+  * type B: 136, now 159;
+  * type F: 231, now 245.
+
+  The key-nibble table at 1229-1235 is stale for 2.008 (key 6 2,767, key 6 + off 121)
+  and USA (key 6 4,007, key 4 552, key 6 + off 311). The table's own 116 contradicts
+  its "all 121 carry key 6".
+* **"133 … 121 keep it through decryption"** (`FINDINGS.md` §7). All 133 keep the
+  bit; 121 is the keyless subset, and the other 12 are `CD` rows.
+* **Smaller items:**
+  * Pro and FX installers copy `0x250` bytes, not `0x24C`;
+  * only V2 makes the `0x700`/`0x9F0` installer writes;
+  * the payload goes through the uncached `0xA0000040`;
+  * the flag nibble leaks beyond bit 3: `31001643` lands at `0x01001643`, and
+    2.0081's `F21EAB7C` becomes an anchor at `0x021EAB7C`;
+  * "fifty-odd instructions" is about 101;
+  * the 37-entry table has 7 distinct targets, not 6.
+* **B(17h) fires "on every interrupt."** Unverifiable without a BIOS image.
+
+### Databases and extraction (`FINDINGS.md` §1-4, §6, `TENTH.md`)
+
+Confirmed:
+
+* all five V2 chain offsets and counts;
+* 11,718 cheats and 15,349 lines;
+* 44/44 and 8/9 block fits;
+* 16/16 vs 0/16 for the payload swap;
+* the specimens;
+* the 1,266-line trap;
+* 2.005's header, territory byte and chain;
+* the support-module slot `+0x38` equal to the framed start in all six V2 databases;
+* `payloads.py`'s 65 blocks, 10 of them corrupt (3 hand-checked: code-cipher
+  re-encryption);
+* no payload key 7 anywhere, FX included.
+
+Not as published:
+
+* **The FX databases** (Bottom line 1). *Callouts applied* in `FINDINGS.md` §4.1 and
+  §6.3 and in `TODO.md`. Open: `REVERSING.md` §10.5 (915-947), the `fxdb.py`
+  docstring, `comms.py:63`/`:395`, and the "past `0x493A3` is erased" detail.
+  `0x493A4-0x493FF` is zero pad, and `0xFF` starts at `0x49400`.
+* **The header guard is the cart's opposite.** Both stagers classify a header by its
+  *stored* byte 0 nibble (`xteng` `0x1ACCEC`/`0x1AD08C`, checked by hand). Key bits 1-3
+  route byte 0 to copy, so the cart stages `51123456 6006` as a Supercode with the
+  stored size. xpcrypt's `7d15818` guard makes it diverge. No shipped header is
+  affected. *Callout applied* in `FINDINGS.md` §6.5. The `crypt_code()` comment and
+  `TODO.md` §4 are open.
+* **2.005 vs 2.008.** 208 of the 223 shared game names have identical codes and 15
+  differ; the doc said "byte-identical". The `Moto Racer 2` offsets were one too high.
+  2.005's default-off rows are all keyed (119 rows), which settles the TENTH §4
+  question against the suspicion. The FX 3.20 and 4.52 databases each have 112
+  keyless default-off rows. *All applied* in `TENTH.md`.
+* **`rom2005.py`'s "six times larger oracle"** compares 7 blocks / 95 rows against
+  16 / 141, so it is smaller. It is not independent either: the 7 are among the 16.
+  Open.
+* **The 17e31fc comparison** gives 281 / 263 / 350 over complete chains, not
+  239 / 263 / 97. *Applied.*
+* **"Games" counts distinct names, not records.** USA has 252 records (Bio Freaks and
+  Casper twice) and `-x` prints 252. The corpus has 1,123 records against 1,121
+  distinct names, and 2.005 has 234 records including the empty one. Open:
+  `FINDINGS.md` §4.1, the eighth-pass table, `TENTH.md` §2.
+* **The old parser restarted *inside* a name.** It resynchronised in
+  `"Duke Nukem:\x06 To Kill"` at `0x27F69`/`0x2C8EC`, not at "a later printable
+  game". The 1,633 / 2,144 figures reproduce exactly.
+* **C edge case (open).** `find_database()` no longer enforces "at least one game".
+  A chain of only empty games is accepted and `-x` exits 0 with no output, where
+  `db2.py` rejects it. So `TENTH.md` §3's "two mirrored places" is not exact. No real
+  image is affected.
+* **Minor:**
+  * MGS "Verliere Chaff" stores the intended `865FAA06 5A5A` shifted one hex digit
+    left; the same bytes ship again in German FX 4.50;
+  * two Mortal Kombat Trilogy cheat names parse as codes;
+  * zero-line cheats are common (249 in USA);
+  * `prechain.py`'s "10,054 distinct names" is a per-chain sum, and the union is
+    8,307;
+  * xpcrypt gives no warning when input ends inside a declared block;
+  * `swap_payload()` (`FINDINGS.md` §4.3, §5.3) no longer exists.
+
+### PC tools (`FCD.md`, `ENCRYPT.md`, `comms.py`)
+
+Confirmed:
+
+* the image-cipher closed form, by all eight routines in an own harness at 20-4099
+  bytes, 511/512/513 included;
+* the §1 seed-table statistics;
+* no image-cipher code in any firmware;
+* the §4 file identities;
+* the DOS encrypter and X-Killer against `xpcrypt -e` (0 differences);
+* no Special32/33 anywhere;
+* the joypad table and the joker generator;
+* the payload templates.
+
+Not as published:
+
+* **Xlink95 reads the full 512 KB.** Both builds call `'G'` for `0x1F000000`,
+  `0x80000` (`push 0x80000; push 0x1F000000` at file `0x10998` in both, found again
+  by hand). They encrypt the result to `ROMS\BackUp.FCD`, and their upload has a
+  512 KB mode. `comms.py`'s "the vendor tool simply never asks" holds for DOS XLink
+  only. FCD's own Windows tool made full FX dumps. Open in `comms.py`.
+* **Cart command `'X'` uploads and executes.** It receives to a wire-given address
+  and `jalr`s into it (`0x1A1B2C`), a second unauthenticated code path. `comms.py`
+  calls it "program flash, as U". Open in `comms.py`. *Noted* in `PLUGIN.md`.
+* **The command set is not "the same" across images.** 0x10/0x11 exist in 2.005,
+  2.008, 2.0081, 2.14 and 2.20. FX and Pro add opcodes, and FX drops `'P'`. DOS also
+  sends in-game `'A'`/`'D'`. Open in `comms.py`.
+* **`FCD.md` §2 misclassified a flash-programmer caller.** `0x1A4698` is the
+  self-destruct, not a page read-modify-write. *Applied.*
+* **`ENCRYPT.md` slips.** The jump table is not "eight zeros" on disk; each entry is
+  its target's in-object offset. The cart's clear loop is at `0x1ABFE0`, not
+  `0x801ABFB4`. *Both applied.* The `xcode.py` docstring is open.
+* **A latent vendor defect.** XLink's walker (`0x29550`) sizes a Megacode as
+  `2 + ceil(nnnn/6)`, one row too many when `nnnn % 6` is 1 or 2. With payload key
+  6/7 it would encipher the next code. No keyed Megacode exists.
+* **Wording** (open):
+  * the DOS loop is 22 instructions, not 21;
+  * X-Killer's body is 15;
+  * the Windows builds are stdcall;
+  * X-Killer's third candidate `0x4050AC` is a false positive;
+  * the dates and versions are off (binary "Released : 19/10/98"; version resource
+    1.07);
+  * the "3,920 functions" are call-target-shaped byte patterns, not functions;
+  * `FINDINGS.md`'s "seed tables" wording is stale (*applied*).
+
+### `PLUGIN.md`, `N64.md`, `ADVANCED_EXPLORER_CODES.md`
+
+* **`PLUGIN.md`.** It is FCD's advertised memory-card upgrade, with menu strings on
+  both generations, and it is not silent on FX. The finding that stands is that it is
+  unauthenticated. The "seek/rewind" is `FileSeek(fd, 0x200)`, so the payload does
+  start at `0x200`. The listing omits a close, a memset, and a malloc/free pair. A
+  failed `FileRead` (−1) passes the `beqz` check. The "one-shot flag" gates only the
+  card BIOS init. The routine is not structurally identical across builds. `0x03` as
+  "standard block count" is uncertain per psx-spx. THX-1138 is a guess. *Callout
+  applied.* Open: `plugin.py` derives the header slot rather than checking it, does not
+  check the seek, and `find_string_addr()` references an undefined `path` on its error
+  path.
+* **`N64.md`.** Both ciphers carry over, and the shared block is word-swapped
+  (Bottom line 3). At least eight other streams are byte-identical PSX ↔ N64, and
+  `comp01.py` decodes all N64 streams. *Callouts applied.* Open source details:
+  * sharkdumps has six builds, five of them scrambled;
+  * the chips are byte-interleaved;
+  * writes need the address transform too;
+  * the team string differs per build.
+* **`ADVANCED_EXPLORER_CODES.md`.** Its type C and D verdicts are *applied*. The FAQ
+  is FCD's own, signed "Wayne" and credited to Herbert and Beckett, not a third-party
+  description. The `../crypto.c` link is stale.
+
+### Notes vs this branch
+
+* **`TODO.md` §5 and `MODULE_SPLIT.md` call the module split "done".** It is only on
+  the unmerged `module-split` branch (`fed8a70`, forked from `854c1e1`). That
+  branch's `db.c` still rejects a zero-cheat game, so merging it would revert
+  `7070614`. *Callout applied* in `TODO.md`. Open in `MODULE_SPLIT.md`.
+* **About 45 mentions of `crypto.c`/`crypto.h`** across the notes name files that
+  exist only on `module-split`. Here they are `xp_crypto.c`/`xp_crypto.h`. Left
+  as is: which name is right depends on whether that branch is merged.
+* **`TODO.md`'s "version bump done" contradicts `FINDINGS.md` §6.7.** Still 1.1, no
+  README entry. *Applied.*
+* **No pass before this one covered** `FCD.md`, `ENCRYPT.md`, `PLUGIN.md`, `N64.md`,
+  `TENTH.md`, `comms.py`, `xlink.py`, `xcode.py`, `payloads.py`, `prechain.py`,
+  `selfdestruct.py`, `typecx.py` or `rom2005.py`.
+
+### Disposition
+
+* **Applied:** corrections to the notes, as marked "Ninth pass" callouts or in-place
+  fixes in `FINDINGS.md`, `ENGINE.md`, `TENTH.md`, `TODO.md`, `N64.md`, `PLUGIN.md`,
+  `FCD.md`, `ENCRYPT.md`, `REVERSING.md` and `ADVANCED_EXPLORER_CODES.md`.
+* **Not applied, by instruction:** everything in the C source and the scripts:
+  * `rom2005.py`'s stale assertions, which break `make check`;
+  * the `comms.py` claims;
+  * `packstats.py`;
+  * the `selfdestruct.py` chip text and `range(len-1)`;
+  * `plugin.py`'s unchecked slots and undefined `path`;
+  * `typecx.py`;
+  * `engineemu.py`'s filtered DCIC write;
+  * the `find_database()` empty-chain case;
+  * the header-guard divergence.
+* **Not applied, as larger rewrites:** the in-body sections listed as open above.
+  Their callouts point here.
 
 ## Extraction implementation audit - 2026-07-30
 

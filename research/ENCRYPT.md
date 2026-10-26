@@ -96,14 +96,15 @@ and the way it clears it is the firmware's habit rather than a compiler's:
 ```
 
 It clears **bytes 1 to 5 of the destination and not byte 0**, which is exactly
-what the cartridge's decrypt does at `0x801ABFB4`; and method 5 then returns
+what the cartridge's decrypt does at `0x1ABFE0`-`0x1ABFF4` in `xteng.dec`; and method 5 then returns
 without writing anything else, leaving that row of zeros - which is what the
 cartridge does for a payload key it does not implement. Two ends of the same
 codebase.
 
 The jump table is at `0x29788`, immediately above the function, and every entry
-in it is a load-time fixup: read out of the file it is eight zeros, and the
-dispatch reads as a jump to the start of the code object. `xcode.py` applies the
+in it is a load-time fixup: read out of the file each entry holds only its target's
+offset within the object (`0x197EA`...`0x19992`), so unfixed the dispatch lands
+`0x10000` below the real target (ninth pass; this used to say "eight zeros"). `xcode.py` applies the
 LE fixup section for this reason - `xlink.py` deliberately does not, because the
 `.fcd` routines need no relocation and an unfixed image is what lets a data
 reference be found by searching for its offset within its object.

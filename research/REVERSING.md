@@ -988,8 +988,12 @@ than scoring candidates and hoping the margin is real.
 
 The same lesson applies one level up: `fwemu` used to find the routine's *extent*
 by scanning to the next `jr $ra` and collect the calls inside it. The German
-firmware puts its routes 0x1000 bytes away from the dispatcher, so that swallowed
-unrelated functions and found 17 call targets instead of 2. A routine reached
+firmware seemed to put its routes 0x1000 bytes away from the dispatcher, so that
+swallowed unrelated functions and found 17 call targets instead of 2. (Ninth pass:
+not so. Read at the right base, the German routes follow the dispatcher directly,
+exactly as in 2.008. The 0x1000 came from the wrong base, and the "second set" of
+table references is `lui`/`addiu` pairs naming `"Here1!!"`-style debug strings that
+happen to sit 0x1000 below the tables.) A routine reached
 through a jump table has no contiguous extent to find. Classifying each callee at
 the moment control actually reaches it needs no extent at all — and it prints
 what it stubbed, so the assumption stays checkable.
