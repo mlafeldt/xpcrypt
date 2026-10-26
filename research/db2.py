@@ -30,7 +30,9 @@ def parse_db(rom, start):
         game = rom[pos:end].decode('latin-1')
         pos = end + 1
         ncheats = rom[pos]; pos += 1
-        if not 1 <= ncheats <= 200:
+        if ncheats == 0:
+            continue  # empty game: a name, zero cheats, then the next game
+        if ncheats > 200:
             raise ValueError("cheat count")
         for _ in range(ncheats):
             end = cstr_end(rom, pos, 255)

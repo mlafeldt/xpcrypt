@@ -29,6 +29,7 @@ def make_fixture():
         '55A936CF2ED9 34FB3457235D 34F734F4FB55')
     records += b'Inline\0\x02' + bytes.fromhex(
         'A00000000000 76621A3E5450')
+    records += b'Empty\0\x00'  # empty game (zero cheats): skipped, not fatal
     records += b'Next\0\x01'
     records += b'Reset\0\x01' + bytes.fromhex('76621A3E5450')
     records += b'\xff\xff\xff\xff'

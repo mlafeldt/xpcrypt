@@ -12,18 +12,20 @@ Two findings:
    database. The corpus is called "nine firmwares" throughout the notes; this is
    the tenth, and it has never been run through the database, engine or
    anti-tamper suites.
-2. **`xpcrypt -x` extracts nothing from it.** Its database is complete and valid,
-   233 games to a clean terminator, but one game carries a cheat count of zero,
-   and both the shipped C reader and `db2.py` treat that as a fatal error that
-   discards the whole chain. No image in `roms/` has an empty game, so the hazard
-   was never seen. A one-line tolerance recovers the whole database and changes
-   nothing on the five corpus databases.
+2. **`xpcrypt -x` extracted nothing from it (now fixed, §3).** Its database is
+   complete and valid, 233 games to a clean terminator, but one game carries a
+   cheat count of zero, and both the shipped C reader and `db2.py` once treated
+   that as a fatal error that discards the whole chain. No image in `roms/` has
+   an empty game, so the hazard was never seen. The one-line tolerance in §3
+   recovers the whole database and changes nothing on the five corpus databases.
 
-The evidence uses the tool's own shipped file, so it needs no `roms/`:
+The evidence uses the tool's own shipped file, so it needs no `roms/`. Before the
+fix in §3, the second command failed:
 
 ```sh
 xpcrypt -r pc/ROMS/Xteng.fcd xteng-2005.dec    # 196458-byte .fcd -> plaintext
-xpcrypt -x xteng-2005.dec                       # Error: no cheat database found
+xpcrypt -x xteng-2005.dec                       # was: Error: no cheat database found
+                                                # now: 233 games / 1668 cheats / 2365 lines
 ```
 
 ---
@@ -142,21 +144,21 @@ one image that needs it.
 ## 3. The fix
 
 An empty game has no codes to extract, so the right behaviour is to skip it, not
-to reject the database. Two places, mirroring each other:
+to reject the database. Applied in two mirrored places:
 
 * **`xpcrypt.c`, `db_cursor_next()`.** Instead of `return -1` on `ncheats == 0`,
-  read the next game name+count in a loop until one is non-empty or the
+  it reads the next game name+count in a loop until one is non-empty or the
   terminator is reached. The empty game contributes no `db_record`, so
   `print_database()` and `find_database()`'s scoring need no other change (an
   empty game simply is not counted and is not printed).
-* **`db2.py`, `parse_db()`.** Replace the `1 <= ncheats` lower bound with `continue`
+* **`db2.py`, `parse_db()`.** The `1 <= ncheats` lower bound became a `continue`
   on `ncheats == 0`, keeping the `<= 200` sanity cap.
 
-`extract_test.py` should grow a fixture with an empty game between two real ones,
-and — once this file is in `roms/` under whatever name — the wider gate should
-extract 233/1668/2365 from it.
-
-Not done here; this note is the evidence, not the patch.
+`extract_test.py` now carries a fixture with an empty game between two real ones;
+its expected output is unchanged, so the extractor has to skip the empty game to
+pass. On the shipped `pc/ROMS/Xteng.fcd` the extractor now recovers 233 games /
+1668 cheats / 2365 lines, and the five corpus databases still extract their
+original 15349 lines / 11718 cheats.
 
 ---
 
@@ -183,7 +185,7 @@ Not done here; this note is the evidence, not the patch.
 # the file is already in the tree, shipped with the DOS tool
 xpcrypt -r pc/ROMS/Xteng.fcd /tmp/xteng-2005.dec
 grep -a 'release' /tmp/xteng-2005.dec | head -1     # -> release 2.005
-xpcrypt -x /tmp/xteng-2005.dec                        # -> Error: no cheat database found
+xpcrypt -x /tmp/xteng-2005.dec                        # -> 233 games (was: Error, before §3)
 
 # the empty game
 xxd -s 0x2a8c6 -l 24 /tmp/xteng-2005.dec             # "Moto Racer 2" 00 00 "Moto Racer" 00 04
