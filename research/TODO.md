@@ -150,7 +150,8 @@ the cart disagreeing about which lines are payload.
   check.
 
 On a mismatch, warn loudly that the cart will program 96 KB over itself the first
-time a key-7 or Special32 code (V2), or a key-4 code (FX), is activated. A stock 2.14
+time a code with one of the trigger first bytes of `FINDINGS.md` §5.3b is activated
+(28 on V2, 24 on FX), or, on V2, two Megacodes at once. A stock 2.14
 image must trigger the warning, because its own header fails its own check. Test:
 the nine images (only 2.14 warns), a patched header, and 2.20. About 40 lines.
 

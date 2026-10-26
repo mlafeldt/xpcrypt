@@ -40,8 +40,11 @@ at first, and a `git add -A` promptly staged 4 MB of firmware dumps.
 > files — but a rebuilt ROM with the header edited will. And one needs no edit at
 > all: Pro 2.14's check string (`1997/8`) predates its own header (`1997-9`), so on
 > a stock 2.14 cart the first key-7 or Special32 code a user activates programs the
-> 96 KB. No row of its shipped database takes either route, which is presumably why
-> it went out like that.
+> 96 KB. So does activating two Megacodes at once, with neither among them.
+> No row of its shipped database takes any of those routes, which is presumably why
+> it went out like that. FCD's own DOS X-Link has a key-7 encrypt routine
+> (`ENCRYPT.md`), so users could make such codes with the vendor's own tool. 5.3b
+> lists every trigger.
 
 The feature is **implemented, committed and validated against real cartridge ROMs**.
 This document captures what the shipped source does not: the format knowledge, the
@@ -587,6 +590,23 @@ notice and to correlate with the punishment:
 Never on the payload path of a Supercode/Megacode, never on an unencrypted code, and
 never on the copy route for a type the cart does not encrypt.
 
+By first byte, measured by decrypting all 256 in every image (`selfdestruct.py`
+asserts the lists): bit 3, the default-off flag, does not matter, and key 7 on
+types 2, A, C and E takes no route, so V2 has 28 trigger bytes and FX 24:
+
+```
+V2  07 0F 17 1F 37 3F 47 4F 57 5F 67 6F 77 7F 87 8F 97 9F B7 BF D7 DF F7 FF
+    32 3A 82 8A
+FX  04 0C 14 1C 34 3C 44 4C 54 5C 64 6C 74 7C 84 8C 94 9C B4 BC D4 DC F4 FC
+```
+
+On V2 staging reaches it too, with no trigger code selected. Two Megacodes in one
+selection make pass 3 hoist the second one's mask row as a type F anchor, and the
+shipped specimen's mask, `FFFFFFFC`, decrypts down the key-7 route on the way
+(`ENGINE.md` §13). Executed in all six V2 builds: the checker is called twice with
+`(0x1F000000, 0x18000)` (on 2.20 the callee is empty). One Megacode does not call
+it. On FX that row takes key 7, which is not FX's trigger.
+
 The string is `"(C) 1997/8 FCD"`, stored **bitwise NOTed** so `strings` never shows it.
 (The firmware also carries a plaintext banner - `"(C) 1998 Future Console Design
 Ltd."` in most V2 builds, `1998/9` in Pro 2.20, `1997-99` on FX - which is what the
@@ -771,6 +791,14 @@ with something, and initials are as good as any other four bytes.
    assumed programming only clears bits, which holds only for the byte-programmed
    "type 3" part that 4.50 alone also accepts.
 
+   No accepted part is known to be safe. `selfdestruct.py` reports that on chip
+   type 2 (manufacturer `0xDA`) nothing reaches the array, but that is its model
+   talking. The V2 programmer sends `0x90` instead of `0xA0` for that type (`0x1A41A8`
+   in 2.14), and the model only knows `0x90` as autoselect. The same routine is the
+   cart's only programmer: in 2.14 it also writes the patch list (`0x900` bytes to
+   `0x1F024600`) each time cheats are activated, and the cheat database at
+   `0x1F02B000`. A type-2 part that did not program on `0x90` would never run a cheat.
+
    What gets written is not all kernel RAM either. `0x3E8-0xFFFF` is; on FX,
    `0x10000` onwards is the running firmware itself. Still open: why Pro 2.20 shipped
    without the check while every later build has it. **Anyone experimenting with a real
@@ -904,7 +932,9 @@ The short version, because it changes how to read the rest of this file:
   exception vector. The payload is not data being poked into the game, it is the
   handler. Only one Megacode fits a selection: pass 1 stops after the first, and a
   second one's mask row is hoisted as a type F anchor that almost certainly
-  mismatches, so nothing runs.
+  mismatches, so nothing runs. Hoisting decrypts that row, as key 7 for an `F7` or
+  `FF` mask, which on V2 runs the copyright check: on a stock 2.14 cart, two Megacodes
+  overwrite the firmware (5.3b).
 * Three of the four types the cipher gives no route to (2, A, C, E) are staging's:
   A and C are rewritten and E is generated. Only 2 plays no part anywhere. D, which
   staging also rewrites, does have a route, so the table is not simply "the staging

@@ -58,8 +58,12 @@ What it comes to, on all ten images:
   itself the first time anyone decrypts such a code.  Nothing it ships does
   that: the decrypt runs over the cheats a user turns on, and no row of its own
   database takes either route (asserted here) - it takes a code typed in or
-  uploaded.  Putting the two bytes `'/8'` back at cart `0x25008` stops it,
-  which is executed here too.  Pro 2.20, the very next Pro build, is the one
+  uploaded whose first byte is one of 28 (`reaching`), or two Megacodes in
+  one selection, which it does not ship either: staging hoists the second
+  one's mask row - `FFFFFFFC` in the shipped specimen - as a type F anchor
+  and decrypts it as key 7 on the way.  Both are executed here, and so is
+  putting the two bytes `'/8'` back at cart `0x25008`, which stops it.  Pro
+  2.20, the very next Pro build, is the one
   with the check removed - and 3.20 onwards compares six characters that avoid
   the date entirely.  That fits 2.20's missing check being the fix for exactly
   this, but nothing in the images says so; it is an inference.
@@ -89,6 +93,7 @@ import sys
 import tempfile
 
 import db2
+import engineemu
 import fcdcrypt
 import fwemu
 import fwimage
@@ -425,16 +430,14 @@ class Cart:
         return (arm.address - self.base + 2, (w >> 16) & 0xFF, (w >> 16) & 0x1F,
                 'beqz $a1 -> beq $zero, $zero: the programmer is never reached')
 
-    def routes(self):
-        """Every first byte / payload key whose route reaches the checker."""
-        f = fwemu.Firmware(self.path)
+    def routes(self, hits):
+        """Every route / payload key that reaches the checker.  @hits are the
+        first bytes that do, from reaching_bytes()."""
         names = set()
-        for first in range(256):
-            f.stubs.clear()
-            f.decrypt([first, 1, 2, 3, 4, 5])
-            if f.skipped():
-                r = romcrypt.ROUTES.get(first & 0xF7)
-                names.add(fxprot.ROUTE_NAME.get(r, r))
+        for first in hits:
+            r = romcrypt.ROUTES.get(first & 0xF7)
+            names.add(fxprot.ROUTE_NAME.get(r, r))
+        f = fwemu.Firmware(self.path)
         for key in range(16):
             f.stubs.clear()
             f.decrypt([0x50, 1, 2, 3, 4, 5], key)
@@ -442,15 +445,27 @@ class Cart:
                 names.add('payload key %d' % key)
         return names
 
-    def reaching_code(self):
-        """One code whose decryption reaches the checker."""
+    def reaching_bytes(self):
+        """Every first byte whose decryption reaches the checker."""
         f = fwemu.Firmware(self.path)
+        hits = []
         for first in range(256):
             f.stubs.clear()
             f.decrypt([first, 1, 2, 3, 4, 5])
             if f.skipped():
-                return first
-        return None
+                hits.append(first)
+        return hits
+
+    def staged_calls(self, lines):
+        """Stage one selection with the checker recorded, not run: the
+        (a0, a1) of every call staging makes to it."""
+        st = engineemu.Stager(self.path, self.name)
+        calls = []
+        for a, f in st.stubs.items():
+            if f is fwemu.nop_stub:
+                st.stubs[a] = lambda m, r: calls.append((r[4], r[5]))
+        st.stage(lines)
+        return calls
 
     def run(self, first, rom=None, chip='AT29C020', ram=None, program='page',
             img=None, limit=8_000_000):
@@ -524,6 +539,21 @@ RELEASES = ['2.004', '2.005', '2.008', '2.0081', '2.14', '2.20',   # V2
 V2_STRING = b'(C) 1997/8 FCD'
 FX_STRING = b'(C) 1997-9 FCD  '
 FX_INDICES = [0, 1, 2, 12, 11, 13]
+
+# engineemu's selection with two keyless Megacodes, the second one's mask row
+# FFFFFFFC as in the shipped specimen; and the same with the second one dropped
+TWO_MEGA = dict((n, l) for n, l, _ in engineemu.STAGED)['two Megacodes']
+ONE_MEGA = TWO_MEGA[:7] + TWO_MEGA[-1:]
+
+
+def reaching(fx):
+    """The first bytes whose decryption calls the checker: the generation's
+    key (bit 3, the default-off flag, ignored) on every type the cipher routes
+    - not 2, A, C or E - and on V2 the two Special32 bytes, flag included."""
+    key = 4 if fx else 7
+    hits = {b for b in range(256)
+            if b & 7 == key and b >> 4 not in (0x2, 0xA, 0xC, 0xE)}
+    return sorted(hits if fx else hits | {0x32, 0x3A, 0x82, 0x8A})
 
 def regions(cart):
     """What is in the cartridge image, in offset order.
@@ -601,12 +631,23 @@ def main(verbose=False):
         rel = release(c)
         fx = c.base >= 0x80000000
         ram = low_ram(c)
-        first = c.reaching_code()
-        routes = c.routes()
+        hits = c.reaching_bytes()
+        first = hits[0]
+        routes = c.routes(hits)
 
         # --- who can reach it, and with what
         check(routes == ({'key4'} if fx else {'Special32', 'key7'}),
               '%s: reached from %s' % (rel, sorted(routes)))
+        check(hits == reaching(fx),
+              '%s: reached from first bytes %s'
+              % (rel, ' '.join('%02X' % b for b in hits)))
+        # ... and from staging, with no such code selected: a second Megacode's
+        # mask row is hoisted as an F anchor, which is key 7 on V2 and nothing
+        # FX routes to its check
+        one, two = c.staged_calls(ONE_MEGA), c.staged_calls(TWO_MEGA)
+        check(not one and two == ([] if fx else [(DST_ARG, LEN_ARG)] * 2),
+              '%s: staging one / two Megacodes calls the checker as %s / %s'
+              % (rel, one, two))
         check(len(c.callers) == (1 if fx else 2),
               '%s: %d call sites to the checker, expected %d'
               % (rel, len(c.callers), 1 if fx else 2))
@@ -693,6 +734,8 @@ def main(verbose=False):
             print('       -> on an untouched cartridge, at the first key-7 or '
                   'Special32 code: %d bytes programmed over cart %06X..%06X'
                   % (len(f.written), min(f.written), max(f.written) + 1))
+            print('       -> reached from %d first bytes (%s), and from staging '
+                  'two Megacodes' % (len(hits), ' '.join('%02X' % b for b in hits)))
             # ... but not by itself: the decrypt runs over the codes a user
             # turns on, and none of its own database's rows takes a route that
             # calls the check.  (Counted over every row, payload rows too, so a
@@ -800,9 +843,14 @@ def main(verbose=False):
             print('       defused by image 0x%05X: %02X -> %02X   (%s)'
                   % (off, was, now, what))
 
-        # --- (e) and one chip on which it does nothing at all.  The program
-        # command is 0xA0 unless the chip-id routine returns 2, and then it is
-        # 0x90 - autoselect, not program - so the page never reaches the array.
+        # --- (e) a chip this model cannot program, which is not a safe chip.
+        # The program command is 0xA0 unless the chip-id routine returns 2, and
+        # then it is 0x90, which the model only knows as autoselect - so here
+        # the page never reaches the array.  On the part itself it must: this
+        # is the cart's only programmer, the one that writes the patch list
+        # (0x900 bytes to 0x1F024600 in 2.14) each time cheats are activated, so
+        # a type-2 cart that took 0x90 as autoselect would never run a cheat.
+        # Asserted only so the command difference stays on record.
         if not fx:
             m, log, done = c.run(first, rom=bytes(rom), ram=bytes(ram),
                                  chip='mfr DA')
@@ -810,8 +858,8 @@ def main(verbose=False):
                   '%s: chip type 2 programmed %d bytes' % (rel, len(m.flash.written)))
             if verbose:
                 print('       chip type 2 (manufacturer 0xDA): command 0x90 '
-                      'instead of 0xA0, %d writes reach the array'
-                      % len(m.flash.written))
+                      'instead of 0xA0, which the model does not program - '
+                      'a limit of the model, not a safe chip')
 
         # the V2 cheat database is behind the firmware and out of reach; the
         # FX header the checker itself reads is not

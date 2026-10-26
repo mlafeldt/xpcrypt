@@ -1196,7 +1196,9 @@ One build does not need the header touched. Pro 2.14 compares
 key-7 or Special32 code a user activates - typed in or uploaded - programs the
 96 KB. Nothing it ships does that: the decrypt runs over the cheats a user turns
 on, and all 1,826 rows of its own database carry key nibble 0, so every one takes
-the copy route. `selfdestruct.py` executes it.
+the copy route. `selfdestruct.py` executes it. It also executes the one trigger
+that needs no key-7 or Special32 code selected: two Megacodes in one selection, whose second mask row
+staging hoists as an F anchor and decrypts as key 7 (`FINDINGS.md` §5.3b).
 
 
 ### 11.4 The FX version is harder on purpose

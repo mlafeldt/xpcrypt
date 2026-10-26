@@ -301,9 +301,9 @@ endif
 # as the page-erasing flash parts the firmware identifies (Atmel AT29C device
 # codes, or SST via SST's alternate ID entry).  Nine of ten images program 96 KB
 # of PSX RAM over their own flash on a header mismatch; release 2.14 does it on a
-# stock, unmodified cartridge as soon as a key-7 or Special32 code is activated
-# (its check string predates its own database header).  No row of its shipped
-# database takes either route.
+# stock, unmodified cartridge as soon as a key-7 or Special32 code, or a second
+# Megacode, is activated (its check string predates its own database header).
+# No row of its shipped database takes any of those routes.
 selfdestruct:
 	@echo '== the self-brick, executed under a flash model =='
 	$(need_roms)
