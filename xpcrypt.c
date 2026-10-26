@@ -463,13 +463,21 @@ static int db_cursor_next(struct db_cursor *cursor, struct db_record *record)
 	if (record->first_in_game) {
 		u8 ncheats;
 
-		if (db_is_term(cursor->rom, cursor->size, cursor->pos))
-			return cursor->game_name == NULL ? -1 : 0;
-		if (db_read_name(cursor, &cursor->game_name,
-				&cursor->game_name_len, &ncheats))
-			return -1;
-		if (ncheats == 0)
-			return -1;
+		/*
+		 * Skip any game that declares zero cheats: a name, a count of
+		 * zero, then the next game. Such a game holds no cheat record,
+		 * so pass over it rather than ending the chain on it. They are
+		 * rare (Xplorer 2.005 has one, "Moto Racer 2"), which is why a
+		 * zero count once read as a malformed chain and discarded the
+		 * whole database.
+		 */
+		do {
+			if (db_is_term(cursor->rom, cursor->size, cursor->pos))
+				return cursor->game_name == NULL ? -1 : 0;
+			if (db_read_name(cursor, &cursor->game_name,
+					&cursor->game_name_len, &ncheats))
+				return -1;
+		} while (ncheats == 0);
 		cursor->cheats_left = ncheats;
 	}
 
