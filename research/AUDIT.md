@@ -437,7 +437,7 @@ callouts. The script and C findings were recorded but not fixed.
   * the header guard, which now follows the cart (`95b85ec`);
   * the warnings for cart behaviour (`87bc2f1`);
   * the brick check on `-r` (`ab14e2e`);
-  * the release (`1a8a969`).
+  * the release (`e0d7134`).
 
   `warn_test.py` and the extended `extract_test.py`, `fuzz_test.py` and
   `oracle_test.py` hold them.

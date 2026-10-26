@@ -41,7 +41,9 @@ The plan the ninth pass of `AUDIT.md` produced, as it landed on `main`:
   stock Pro 2.14 included. It still writes the output.
 * **`047a8fb`** - a code line dressed in `$` or hyphens gets a warning and still
   passes through untouched.
-* **`1a8a969`** - release 1.2, with the README history and a Warnings section.
+* **`42a0ab8`** - the slide code (type B) counts among the addressed types for the
+  default-off warning; the first cut left it out.
+* **`e0d7134`** - release 1.2, with the README history and a Warnings section.
 
 `warn_test.py` (`make warnings`) holds every warning to the finding it rests on, both
 on the stream and in the `-x` counts per database.

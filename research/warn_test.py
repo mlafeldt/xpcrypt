@@ -36,6 +36,8 @@ STREAM = [
     (['-e', '4'], ['8802A798 FFFF'], None),     # encrypting it is the cure
     ([], ['8E1BDB3A 72C6'], None),              # default-off, but keyed
     ([], ['E8000000 0001'], 'switched off by default'),     # E has no key
+    ([], ['B8000000 0001'], 'switched off by default'),     # a slide too
+    ([], ['48000000 0001'], None),              # type 4 has no address
     ([], ['31001643 500F'], 'select no cipher'),    # the USA database's
     ([], ['82000000 0001'], 'Special32 route'),
     ([], ['33000000 0001'], 'Special33 route'),
