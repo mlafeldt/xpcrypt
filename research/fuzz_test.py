@@ -21,13 +21,16 @@ asserts both rather than leaving the reader to notice:
 
 The cases are grown from extract_test.py's fixture - imported, not copied, so
 the two cannot drift apart - by truncating it, corrupting it, and rebuilding
-it with edge-value counts.  Anything that trips a sanitizer is kept under
+it with edge-value counts.  The FX families do the same to the LZW container
+an Xplorer FX keeps its chain in: a corrupted header or stream, and random
+chains packed behind sizes that may lie.  Anything that trips a sanitizer is kept under
 fuzz-crashes/ with the seed that produced it in its name.
 
   uv run python fuzz_test.py [path/to/xpcrypt] [--cases N] [--seed N]
 """
 import os
 import random
+import struct
 import subprocess
 import sys
 import tempfile
@@ -35,7 +38,8 @@ from multiprocessing import Pool
 from pathlib import Path
 
 import fcdcrypt
-from extract_test import make_fixture
+import fxdb
+from extract_test import make_fixture, make_fx_fixture
 
 XPCRYPT = Path('../xpcrypt')
 CRASH_DIR = Path('fuzz-crashes')
@@ -132,6 +136,33 @@ def make_case(rng, kind):
         return fcdcrypt.encrypt(
             with_signature(b'\xff' * 0x20 + record_chain(rng)))
 
+    if kind == 7:                       # the FX container, corrupted
+        rom = bytearray(make_fx_fixture())
+        for _ in range(rng.randint(1, 4)):
+            rom[rng.randrange(0x400, 0x440)] = rng.randrange(256)
+        return bytes(rom)
+
+    if kind == 8:                       # a random chain packed behind FX sizes
+        chain = record_chain(rng)
+        stream = fxdb.lzw_pack(chain)
+        roll = rng.random()
+        if roll < 0.3:                  # cut the stream short
+            stream = stream[:rng.randint(0, len(stream))]
+        elif roll < 0.45:               # or replace it with noise
+            stream = bytes(rng.randrange(256) for _ in range(len(stream)))
+        packed, unpacked = len(stream), len(chain)
+        if rng.random() < 0.3:          # and let the header lie
+            packed += rng.choice([-2, -1, 1, 2, 0x1000])
+            unpacked += rng.choice([-1, 1, -len(chain), 0x100000])
+        rom = bytearray(b'\xff' * (0x408 + len(stream) + 0x10))
+        rom[SIG_OFF:SIG_OFF + len(SIG)] = SIG
+        struct.pack_into('<I', rom, fxdb.MODULE_PTR, 0x9F000100)
+        struct.pack_into('<I', rom, 0x100 + fxdb.DB_SLOT, 0x9F000400)
+        struct.pack_into('<II', rom, 0x400, max(packed, 0) & 0xFFFFFFFF,
+                         max(unpacked, 0) & 0xFFFFFFFF)
+        rom[0x408:0x408 + len(stream)] = stream
+        return bytes(rom)
+
     n = rng.randint(MIN, 0x400)         # noise, half of it sprayed with 0xFF
     rom = bytearray(rng.randrange(256) for _ in range(n))
     if rng.random() < 0.5:
@@ -140,7 +171,7 @@ def make_case(rng, kind):
     return with_signature(bytes(rom))
 
 
-KINDS = 8
+KINDS = 10
 
 
 def keep_crash(seed, data, why):

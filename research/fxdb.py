@@ -31,6 +31,12 @@ db2.parse_db() reads it unchanged.  This file decodes all four FX containers
 with its own decoder, then *executes* the firmware's own decompressor out of
 each image under fwemu.py and requires the two to agree byte for byte.
 
+The encoder is Nelson's too.  lzw_pack() below is his compress() at 14 bits -
+greedy longest match, a code per new string until 0x3FFE, then the end code and
+one code 0 to push the last bits out - and re-packing each decoded chain with
+it reproduces the stored stream byte for byte, all four of them.  So FCD did
+not just use his decoder: the databases were written by his compressor.
+
 This file used to say the opposite: that no FX dump holds a database, because
 the firmware names flash pages 0x7F000 and 0x80000, past the end of every dump.
 Those pages are real - `0x8003BB20` in english.dec puts a descriptor at
@@ -160,6 +166,37 @@ def lzw_unpack(data):
         old = new
 
 
+def lzw_pack(data):
+    """Nelson's 14-bit compress(), the encoder that wrote the FX databases."""
+    out = bytearray()
+    acc = nbits = 0
+
+    def put(code):
+        nonlocal acc, nbits
+        acc = (acc << BITS) | code
+        nbits += BITS
+        while nbits >= 8:
+            nbits -= 8
+            out.append((acc >> nbits) & 0xFF)
+        acc &= (1 << nbits) - 1
+
+    if data:
+        table, nxt, s = {}, FIRST, data[0]
+        for c in data[1:]:
+            if (s, c) in table:
+                s = table[s, c]
+                continue
+            if nxt < END:
+                table[s, c] = nxt
+                nxt += 1
+            put(s)
+            s = c
+        put(s)
+    put(END)
+    put(0)                  # his flush: the whole bytes go out, the rest is lost
+    return bytes(out)
+
+
 def module_slot(raw):
     """(support module offset, the database pointer it holds)."""
     module = struct.unpack_from('<I', raw, MODULE_PTR)[0] & 0xFFFFFF
@@ -283,6 +320,13 @@ def main():
                 problems.append('%s: container (0x%X, 0x%X, %s), expected %s'
                                 % (name, packed, unpacked, digest,
                                    EXPECT_FX.get(name)))
+            repacked = lzw_pack(chain) == raw[off + 8:off + 8 + packed]
+            print('   re-packed with Nelson\'s compress(): %s'
+                  % ('byte-identical to the stored stream' if repacked
+                     else 'DIFFERS from the stored stream'))
+            if not repacked:
+                problems.append('%s: lzw_pack() does not reproduce the stored '
+                                'stream' % name)
             entry, ret, out = firmware_unpack(path, raw, off, unpacked)
             print('   the firmware\'s decompressor @%08X returns 0x%X, output '
                   '%s' % (entry, ret, 'identical' if out == chain else 'DIFFERS'))
