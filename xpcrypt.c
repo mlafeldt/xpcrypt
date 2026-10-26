@@ -234,16 +234,27 @@ static int crypt_code(u8 *code, struct code_stream *stream)
 	}
 
 	if (stream->decrypt) {
+		u8 key_bits = code[0] & 0x07;
+
 		xp_decrypt_code(code, stream->key);
 		/*
-		 * The key bits of a header are clear once we have decrypted it,
-		 * and of a header that was never encrypted anyway. If they are
-		 * still set we could not decrypt it, so its key and size fields
-		 * are still ciphertext and must not be used to start a block. A
-		 * type A header has neither field and is never encrypted.
+		 * The Xploder tells a block header by the type nibble it is
+		 * stored with, before decrypting anything, and takes the size and
+		 * payload key from whatever the decryption leaves. The key bits 1
+		 * to 3 select no cipher, so a header that carries one is used just
+		 * as it is stored - size field and all - and the codes below it
+		 * are payload. That is a header nobody meant to write, which is
+		 * worth a warning, but the codes below it are payload on the
+		 * cartridge, and payload is never to be decrypted as code.
 		 */
-		if (!(code[0] & 0x07) || (code[0] & 0xF0) == 0xA0)
-			stream->index = start_block(code, &stream->blk);
+		stream->index = start_block(code, &stream->blk);
+		if (stream->index >= 0 && stream->blk.kind != XP_BLOCK_INLINE &&
+				key_bits != 0 && key_bits < XP_KEY_4)
+			fprintf(stderr, "Warning: block header %02X%02X%02X%02X "
+				"%02X%02X has key bits %i, which select no "
+				"cipher - the Xploder takes its size as stored\n",
+				code[0], code[1], code[2], code[3], code[4],
+				code[5], key_bits);
 	} else {
 		/* The header has to be parsed before it is encrypted. */
 		stream->index = start_block(code, &stream->blk);
