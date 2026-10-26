@@ -49,8 +49,16 @@ target runs it in the gate).
 
 From `xteng.dec` (release 2.008, V2, base `0x001A0000`); the string
 `bu00:FCDEXE1138` is at image `0x1BE2D4` and is referenced from exactly one
-place. Names for the memory-card calls are by their argument shapes - the PSX
-BIOS file API (open/read/close on a `bu00:` path).
+place. The four memory-card calls are not named by their argument shapes but
+pinned by disassembly: each is a PSX BIOS B-function thunk - `addiu $t0, 0xB0;
+jr $t0; addiu $t1, N`, a jump to the BIOS `0xB0` dispatch table with the
+function number in `$t1` - and reading `N` out of each fixes the file API
+exactly:
+
+```
+0x1A3DB4  B(32h) FileOpen      0x1A3DC0  B(33h) FileSeek
+0x1A3DCC  B(34h) FileRead      0x1A3DF0  B(36h) FileClose
+```
 
 ```
 001A0834  addiu $sp, $sp, -0x240
@@ -136,6 +144,10 @@ arbitrary MIPS code on the PlayStation, with the load address chosen by the file
 Settled, by disassembly across all ten images and by `plugin.py`'s per-image
 assertions: the loader is present everywhere, the header offsets are `0x44`
 (address) and `0x03` (size), and nothing validates the payload before the jump.
+An independent disassembler (rizin, not this repo's capstone-based `mipscan`)
+reproduces the 2.008 routine instruction-for-instruction, including the four
+BIOS thunks above and the branch-free window from the payload read to the
+`jalr`, so the reading does not rest on one toolchain.
 
 Not executed. Unlike the code engine (`ENGINE.md` §5, run under `fwemu.py`),
 this routine has only been *read*. Driving it would need the PSX memory-card
