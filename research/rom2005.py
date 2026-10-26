@@ -16,11 +16,12 @@ decodes, has five more, used on purpose as a legend.)  Both locators once
 rejected a zero count outright, so the chain failed to parse, no framed
 candidate survived and `xpcrypt -x` reported no database at all.  A zero count
 is not corruption: the record is well formed and the chain continues correctly
-straight after it.  Both readers now skip it (`7070614` in the C, `6f42321`
+straight after it.  Both readers now accept it (`7070614` in the C, `6f42321`
 in db2.py), and this file holds them to that: `db2.find_db()` has to find the
-chain, `xpcrypt -x` has to print all of it - 234 game records, one of them
-empty, so 233 games, 1,668 cheats and 2,365 code lines - and a walk that still
-rejects the zero has to fail on that one record and nowhere else.
+chain, `xpcrypt -x` has to print all of it - 234 game records, the empty one
+printed as a game with nothing under it (`ca3c019`), 1,668 cheats and 2,365
+code lines - and a walk that still rejects the zero has to fail on that one
+record and nowhere else.
 
 **2.005 stores every block payload in the clear, 2.008 encrypts the same bytes
 with payload key 6.**  Seven Supercode/Megacode headers change key 0 -> key 6
@@ -458,15 +459,20 @@ def tool_half(problems):
                  and l != '//=====' and not code.match(l))
     print('   exit %d, stderr %r: %d games, %d cheats, %d code lines'
           % (p.returncode, p.stderr.decode().strip(), games, cheats, lines))
+    want_games = EXPECT_GAMES + len(EXPECT_EMPTY)
     if p.returncode != 0 or p.stderr or (games, cheats, lines) != (
-            EXPECT_GAMES, EXPECT_CHEATS, EXPECT_LINES):
+            want_games, EXPECT_CHEATS, EXPECT_LINES):
         problems.append('xpcrypt -x on 2.005: exit %d, %d/%d/%d - expected '
-                        'exit 0 and %d/%d/%d, the empty game skipped'
-                        % (p.returncode, games, cheats, lines, EXPECT_GAMES,
+                        'exit 0 and %d/%d/%d, the empty game included'
+                        % (p.returncode, games, cheats, lines, want_games,
                            EXPECT_CHEATS, EXPECT_LINES))
-    if any(l == '"%s"' % EXPECT_EMPTY[0][1] for l in out):
-        problems.append('xpcrypt -x prints the empty game %r'
-                        % EXPECT_EMPTY[0][1])
+    # The empty game is printed, and nothing is printed under it: the next
+    # line after its name closes it.
+    name = '"%s"' % EXPECT_EMPTY[0][1]
+    at = [i for i, l in enumerate(out) if l == name]
+    if len(at) != 1 or out[at[0] + 1:at[0] + 3] != ['', '//=====']:
+        problems.append('xpcrypt -x does not print the empty game %s as a '
+                        'game with no cheats' % name)
 
 
 def main():

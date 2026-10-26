@@ -157,34 +157,33 @@ one image that needs it.
 
 ## 3. The fix
 
-An empty game has no codes to extract, so the right behaviour is to skip it, not
-to reject the database. Applied in two places, which mirror each other except at
-one edge:
+An empty game has no codes to extract, but it is a record, so the right behaviour
+is to keep reading, not to reject the database. That took two steps in the C and
+one in the reference reader:
 
-* **`xpcrypt.c`, `db_cursor_next()`.** Instead of `return -1` on `ncheats == 0`,
-  it reads the next game name+count in a loop until one is non-empty or the
-  terminator is reached. The empty game contributes no `db_record`, so
-  `print_database()` and `find_database()`'s scoring need no other change (an
-  empty game simply is not counted and is not printed).
+* **`7070614`, `xpcrypt.c` `db_cursor_next()`.** Instead of `return -1` on
+  `ncheats == 0`, it read past the game to the next one, so an empty game was
+  skipped: not counted and not printed.
+* **`ca3c019` (1.2), the same function.** An empty game is now a record of its
+  own, with no cheat name and no codes. `-x` prints it as a game name with nothing
+  under it. That matters beyond 2.005: the German FX database opens with five
+  empty games that make up a legend for its abbreviations. `find_database()` also
+  requires a chain to hold at least one cheat now. Before, a chain of nothing but
+  empty games validated, and `-x` exited 0 and printed nothing.
 * **`db2.py`, `parse_db()`.** The `1 <= ncheats` lower bound became a `continue`
-  on `ncheats == 0`, keeping the `<= 200` sanity cap.
+  on `ncheats == 0`, keeping the `<= 200` sanity cap. It already rejected a chain
+  with no cheat in it, so on that edge the two readers now agree.
 
-The edge is a chain of nothing but empty game records. `db2.parse_db()` still
-rejects it: it reaches the terminator with no cheat read and raises "empty". The
-C does not: `db_cursor_next()` reports a clean end once it has read any game
-record, empty or not, so `find_database()` accepts such a chain as a database of
-zero games and `-x` exits 0 and prints nothing - where its own comment says a
-candidate has to parse at least one game. No image has such a chain, so no
-extraction changes; the C is left as it is (ninth pass, `AUDIT.md`).
-
-`extract_test.py` now carries a fixture with an empty game between two real ones;
-its expected output is unchanged, so the extractor has to skip the empty game to
-pass. On the shipped `pc/ROMS/Xteng.fcd` the extractor now recovers 233 games /
-1668 cheats / 2365 lines, and the five corpus databases still extract their
-original 15349 lines / 11718 cheats. `rom2005.py` holds both readers to it: `-x`
-has to print all 233 games and skip the empty one, `db2.find_db()` has to find
-the chain at `0x25000`, and a walk that still rejects a zero count has to fail on
-`Moto Racer 2` and nowhere else.
+`extract_test.py` carries a fixture with an empty game between two real ones,
+which `-x` has to print, and a chain of empty games only, which it has to refuse.
+On the shipped `pc/ROMS/Xteng.fcd` the extractor recovers 234 game records (233
+with cheats) / 1668 cheats / 2365 lines, and the five corpus databases still
+extract their original 15349 lines / 11718 cheats. `rom2005.py` holds both readers
+to it:
+* `-x` has to print all 234 records, `Moto Racer 2` with nothing under it;
+* `db2.find_db()` has to find the chain at `0x25000`;
+* a walk that still rejects a zero count has to fail on `Moto Racer 2` and nowhere
+  else.
 
 ---
 

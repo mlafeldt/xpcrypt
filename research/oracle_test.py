@@ -12,8 +12,8 @@ cartridge (see REVERSING.md). This uses it as an oracle:
     of payload codes the firmware expects to follow a header;
   * a code type A header takes every code below it as raw payload, so none of
     them may be transformed as a code of its own;
-  * a block header stored with key bits 1-3 starts no block - where the
-    cartridge would start one, which is counted rather than hidden.
+  * a block header stored with key bits 1-3 starts a block anyway, with its
+    size as stored, the way the cartridge stages it - and says so on stderr.
 
 No ROM needed: the codes are generated. If decrypted ROMs are lying around in
 roms/, their databases are thrown in as well.
@@ -64,6 +64,13 @@ def run(args, codes):
         sys.exit('%s %s: %d codes in, %d out' % (XPCRYPT, ' '.join(args),
                                                  len(codes), len(got)))
     return got
+
+
+def stderr_of(args, codes):
+    """What xpcrypt says on stderr about @codes."""
+    text = '\n'.join('%02X%02X%02X%02X %02X%02X' % tuple(c) for c in codes)
+    return subprocess.run([XPCRYPT] + args, input=text.encode(),
+                          capture_output=True).stderr
 
 
 def route_of(first):
@@ -242,16 +249,16 @@ def test_empty_blocks():
 
 
 def test_unkeyed_headers():
-    """Block headers stored with key bits 1-3: a known divergence, asserted.
+    """Block headers stored with key bits 1-3, staged the cartridge's way.
 
     The jump table has no route for a low nibble of 1-3, so the firmware copies
     such a header and stages it by its *stored* type nibble - both stagers test
     byte 0 & 0xF0 before decrypting (0x1ACCEC, 0x1AD08C in xteng.dec) - with its
-    size and payload key taken verbatim.  xpcrypt reads the key bits as a key
-    it could not apply and starts no block (FINDINGS.md 6.5), so the rows below
-    decrypt as ordinary codes.  No shipped header is stored this way.  This
-    holds xpcrypt to its rule and counts the rows where the cartridge, staging
-    a block, would decrypt them with the payload key instead."""
+    size and payload key taken verbatim.  xpcrypt does the same since 95b85ec
+    (it used to start no block, FINDINGS.md 6.5): the header comes back as it
+    is, the rows below are payload under its payload key, and a warning names
+    the key bits.  No shipped header is stored this way.  `differ` counts the
+    rows that an ordinary-code reading - the old rule - would have got wrong."""
     t = Test('headers with key bits 1-3')
     good = [n for n in range(16)
             if n not in GAP_NIBBLES and n not in BLOCK_NIBBLES]
@@ -276,12 +283,15 @@ def test_unkeyed_headers():
                     got = run([], [bytes(head)] + below)
                     t.eq(got[0], bytes(head), 'header left as it is')
                     for raw, mine in zip(below, got[1:]):
-                        t.eq(mine, bytes(romcrypt.decrypt(list(raw))),
-                             'row below as an ordinary code')
-                        if mine != bytes(romcrypt.decrypt(list(raw),
-                                                          payload_key)):
+                        t.eq(mine, bytes(romcrypt.decrypt(list(raw),
+                                                          payload_key)),
+                             'row below as payload')
+                        if mine != bytes(romcrypt.decrypt(list(raw))):
                             differ += 1
-    return t.done(', %d row(s) the cartridge would stage as payload' % differ)
+                    t.eq(bytes([b'select no cipher' in stderr_of(
+                        [], [bytes(head)] + below)]), b'\x01', 'warning')
+    return t.done(', %d row(s) an ordinary-code reading would get wrong'
+                  % differ)
 
 
 def test_inline_blocks():

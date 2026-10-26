@@ -6,10 +6,10 @@ Audit dates: 2026-07-28 through 2026-07-30, and 2026-10-26.
 > material added after the eighth: `TENTH.md`, `PLUGIN.md`, `N64.md`, `ENCRYPT.md`,
 > `FCD.md` and the later scripts. It is also the first to re-derive the firmware
 > claims with independent tooling rather than the repo's own. It overturns three
-> headline conclusions (FX databases, type C/D/E, the N64 ciphers). Every research-side
-> finding is now fixed in the notes and the scripts (see its Disposition). The "Open"
-> markers in its findings record the state after the first round. What remains open is
-> the C source, planned in `TODO.md`. The older sections are history.
+> headline conclusions (FX databases, type C/D/E, the N64 ciphers). Every finding is
+> now fixed: the research side in the notes and scripts, and the C side in xpcrypt 1.2
+> (see its Disposition). The "Open" markers in its findings record the state after the
+> first round. The older sections are history.
 
 ## Ninth pass: deep review against the binaries - 2026-10-26
 
@@ -431,13 +431,16 @@ callouts. The script and C findings were recorded but not fixed.
     3,598 of its 3,630 `E8` rows become RAM-range writes; the raw rows give none.
     That is evidence for `N64.md`'s code-cipher finding that does not rest on
     hammerhead.
-* **Still open (C source, planned in `TODO.md`):**
-  * FX `-x`;
-  * the empty-only-chain case in `find_database()`;
-  * the header-guard divergence;
-  * the warnings for cart behaviour;
-  * the brick check;
-  * the release.
+* **The C source: fixed in 1.2** (`TODO.md`, "Done in 1.2"):
+  * FX `-x` (`1f11e7d`);
+  * the empty-only-chain case, with empty games now printed (`ca3c019`);
+  * the header guard, which now follows the cart (`95b85ec`);
+  * the warnings for cart behaviour (`87bc2f1`);
+  * the brick check on `-r` (`ab14e2e`);
+  * the release (`1a8a969`).
+
+  `warn_test.py` and the extended `extract_test.py`, `fuzz_test.py` and
+  `oracle_test.py` hold them.
 * **Still open (research).** These were not established:
   * what disarms the `0x700` poke table on Pro/FX;
   * whether the menu caps the selection size;

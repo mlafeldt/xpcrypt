@@ -833,6 +833,12 @@ with something, and initials are as good as any other four bytes.
    independent decoders agree byte for byte and stop at exactly the declared size. The
    two 4.52 dumps are different builds but carry the same database.
 
+   The encoder is Nelson's too. Re-packing each decoded chain with his `compress()` at
+   14 bits reproduces the stored stream byte for byte, all four of them (`fxdb.py`
+   asserts it). That is greedy longest match, a code per new string until `0x3FFE`,
+   then the end code and one code 0 to flush. Since 1.2, `xpcrypt -x` reads these
+   databases (`lzw.c`), plain or `.fcd`.
+
    How it was misread. The FX firmware also keeps an 8-byte descriptor at `0x1F07FFF8`
    (a 16-bit field at +6). `0x8003BEEC` in `v452d.rom` sizes a region as
    `0x80000 - (p + 0x100 + n)`; `0x8003C7CC` writes the descriptor and `0x8003C7F8`
@@ -864,23 +870,27 @@ with something, and initials are as good as any other four bytes.
    the right call. Still no evidence any database uses them: every `32`/`33`/`82`/`83`
    line in the three databases is a type 5/6 payload row, and the cart has no encrypt
    side at all. If ported, mind that the firmware leaves `dst[0]` untouched here.
-5. **A header whose key bits select no cipher - xpcrypt and the cart disagree.**
-   `7d15818` made xpcrypt start a block only when the header's key bits are clear after
-   decryption: either it decrypted, or it never carried a key. It now lives in
-   `crypt_code()`. The motivation was that `51123456 6006` turned the following line
-   into `4476D366 AA22`, and that a header reading `6FFF` swallowed the next 683 codes.
-   The ninth pass (`AUDIT.md`) found that the cart does the opposite. Both stagers
-   (`0x1ACCEC` / `0x1AD08C` in `xteng`) classify a header by the *stored* byte 0 high
-   nibble, before decrypting it with key −1, and key bits 1-3 send byte 0 to the copy
-   route. So the cart stages `51123456 6006` as a Supercode with the size as stored,
-   and it would swallow those 683 codes too. No shipped database has such a header, so
-   nothing real is affected. But the guard is a divergence from the cart, not a fix,
-   and whether to keep it (and warn) is a decision for the C side.
+5. ~~**A header whose key bits select no cipher - xpcrypt and the cart disagree.**~~
+   **Settled in 1.2 (`95b85ec`): xpcrypt follows the cart.** `7d15818` made xpcrypt
+   start a block only when the header's key bits are clear after decryption: either it
+   decrypted, or it never carried a key. The motivation was that `51123456 6006`
+   turned the following line into `4476D366 AA22`, and that a header reading `6FFF`
+   swallowed the next 683 codes. The ninth pass (`AUDIT.md`) found that the cart does
+   the opposite. Both stagers (`0x1ACCEC` / `0x1AD08C` in `xteng`) classify a header
+   by the *stored* byte 0 high nibble, before decrypting it with key −1, and key bits
+   1-3 send byte 0 to the copy route. So the cart stages `51123456 6006` as a
+   Supercode with the size as stored, and it would swallow those 683 codes too. That
+   made the guard a divergence, not a fix. xpcrypt now classifies the same way and
+   warns that the header's key bits select no cipher. `oracle_test.py` holds it to the
+   cart's side. No shipped database has such a header.
 6. ~~**Extract cheat codes from ROMs.**~~ - **implemented.** `-x`
    accepts either a plaintext ROM or its encrypted `.fcd`, locates the complete
-   database after the erased-flash boundary, expands name abbreviations and
-   decrypts every entry with a fresh block state at its real cheat boundary.
-7. **Version bump / `README` history entry remains deferred.**
+   database - after the erased-flash boundary on V2, through the module's pointer and
+   the LZW container on FX (since 1.2) - expands name abbreviations and decrypts every
+   entry with a fresh block state at its real cheat boundary. Empty games are printed,
+   and since 1.2 it says on stderr what the cartridge will run differently (README,
+   "Warnings"; `warn_test.py`).
+7. ~~**Version bump / `README` history entry remains deferred.**~~ - done: 1.2.
 
 ---
 

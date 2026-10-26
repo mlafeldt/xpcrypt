@@ -6,162 +6,54 @@ re-derived.
 
 Evidence lives in `FINDINGS.md` (conclusions) and `REVERSING.md` (method and
 annotated listings). What the code types *do* is in `ENGINE.md`. Cite section
-numbers rather than restating them. The ninth pass of `AUDIT.md` (2026-10-26)
-re-derived all of it against the binaries and reshaped this list: it found the FX
-databases, the staging normaliser, and a header guard that disagrees with the cart.
+numbers rather than restating them.
 
-Where the code stands. The shipped source is `xpcrypt.c` plus `crypto.c`/
-`crypto.h` on `main`, and `research` is `main` plus this directory. Done there:
-Supercode/Megacode and type A blocks, the route table, the ROM cipher as a closed
-form (1a), and `-x` for V2 images, empty games included. The module split (old item
-5) exists only on the unmerged `module-split` branch (`fed8a70`, forked from
-`854c1e1`). Its `db.c` predates the empty-game fix (`7070614`); its rename of
-`xp_crypto.c`/`.h` to `crypto.c`/`.h` has since been made on `main` too. The version is still 1.1, and the README
-history ends in 2009.
-
-Code fixes land on `main`; `research` is rebased onto it afterwards, and its gate
-(`make` here) is the regression check for each step until item 1 gives the root one.
+Where the code stands. `main` is xpcrypt 1.2: `xpcrypt.c`, `crypto.c`/`crypto.h`
+and `lzw.c`/`lzw.h`. `research` is `main` plus this directory, and its gate (`make`
+here) is the regression check for every change to `main`; the tests stay here for
+now. The module split exists only on the unmerged `module-split` branch (`fed8a70`,
+forked from `854c1e1`). It renames `xp_crypto.*` the way `main` now has, but its
+`db.c` predates the empty-game fix and everything since.
 
 ---
 
-## Plan for `main`
+## Done in 1.2
 
-### 0. Decide the module split first
+The plan the ninth pass of `AUDIT.md` produced, as it landed on `main`:
 
-Everything below touches the database reader, the code stream or the text
-diagnostics. Those are exactly the seams `MODULE_SPLIT.md` cut. Doing the work in
-the monolith and then re-splitting does it twice, so settle the branch first:
+* **`8f9b90b`** - `xp_crypto.c`/`.h` became `crypto.c`/`.h`. The identifiers keep
+  their `xp_`.
+* **`1f11e7d`** - `-x` reads the Xplorer FX: the module's pointer at
+  `*(rom + 0x7C) + 0xB8`, the container, and Nelson's 14-bit LZW in `lzw.c`
+  (`FINDINGS.md` §6.3). V2 still goes through the framing scan, unchanged.
+  `extract_test.py` has an FX fixture, four damaged containers and the four FX
+  images; `fuzz_test.py` has two FX families.
+* **`ca3c019`** - empty games are printed, and a chain needs at least one cheat to
+  count as a database (`TENTH.md` §3).
+* **`95b85ec`** - a block starts on the header's *stored* type, as on the cartridge.
+  Key bits 1-3 keep the header as stored, size and all, with a warning
+  (`FINDINGS.md` §6.5). `oracle_test.py` asserts the cart's side.
+* **`87bc2f1`** - warnings for codes the cartridge runs differently: the default-off
+  bit on a keyless code, key bits that select no cipher (or the Special32/33 routes),
+  empty blocks, and blocks cut short. `-x` gives one line per kind for the whole
+  database.
+* **`ab14e2e`** - `-r` models the anti-tamper check on the plaintext side and warns,
+  stock Pro 2.14 included. It still writes the output.
+* **`047a8fb`** - a code line dressed in `$` or hyphens gets a warning and still
+  passes through untouched.
+* **`1a8a969`** - release 1.2, with the README history and a Warnings section.
 
-* **Recommended: rebase `fed8a70` onto `main` and merge it.** Port the empty-game
-  loop of `7070614` (`db_cursor_next()`'s `do ... while (ncheats == 0)`) into
-  `db.c`'s cursor; its `xp_crypto` → `crypto` rename is already on `main`. Gate: `make` here,
-  plus the branch's own `tests/`.
-* Otherwise delete the branch and mark `MODULE_SPLIT.md` as not pursued.
+`warn_test.py` (`make warnings`) holds every warning to the finding it rests on, both
+on the stream and in the `-x` counts per database.
 
-### 1. A root `make check`
+Earlier, before the ninth pass: Supercode/Megacode and type A blocks, the route
+table (`XP_KEYED_TYPES`), the closed-form ROM cipher, and `-x` itself.
 
-The firmware differential test runs with **no ROMs at all** (1792 + 8200 + 20590 +
-60 + 150 + 1080 checks against `romcrypt.py`), but only from this directory, and it
-needs `uv`. Give the root a `check` target that needs neither:
+---
 
-* the module-split `tests/` (stream reset, text pass-through, database selection,
-  transaction-safe ROM files);
-* golden vectors generated once by `romcrypt.py` and committed as a fixture: normal
-  codes per key, payload rows per payload key, block row counts and the zero-length
-  cases. A C test or a `diff` checks them, and `research/` keeps the generator, so the
-  release build stays free of Python;
-* `fixture.codes`/`fixture.expect` and the README samples, decrypted and diffed.
+## Still open
 
-Highest leverage of anything here: it turns "verified once" into "stays verified"
-for every item below.
-
-### 2. `-x` for FX images
-
-Found in the ninth pass (`FINDINGS.md` 4.1, 6.3); `fxdb.py` is the reference and
-oracle. All four FX dumps carry their database, LZW-packed:
-
-* **locate:** `*(u32 *)(rom + 0x7C)` is the support module (`0x9F001500` on FX,
-  `0x1F023000`/`0x1F025000` on V2). Its word at `+0xB8` is the database address, and
-  the address's low 20 bits are the file offset. Bounds-check both reads;
-* **unpack (FX):** an 8-byte little-endian header (packed size, unpacked size),
-  then 14-bit codes MSB first:
-  * first free code 256, no clear code, end code `0x3FFF`;
-  * the dictionary fills inside every shipped stream (`0x90C7` packed bytes is
-    about 21,000 codes), so copy `fxdb.py`'s table-full rule exactly; the
-    firmware's own decompressor agrees with it byte for byte;
-  * require the output to be exactly the declared size and to end in
-    `FF FF FF FF`;
-* **walk:** the existing record walker, unchanged, over the unpacked buffer.
-
-Tests:
-
-* `extract_test.py` gains the FX figures, with `.fcd`/`.dec` identical:
-
-  | build | cheats | lines |
-  |---|---|---|
-  | 3.20 | 1922 | 2825 |
-  | 4.50 | 2071 | 2957 |
-  | 4.52 | 1921 | 2823 |
-
-* `fuzz_test.py` gains malformed containers: lying sizes, codes past the next
-  free one, truncation;
-* a synthetic FX image built by a small LZW encoder in the test covers the no-ROM
-  path.
-
-About 120 lines of C. The FX 3.20 and 4.52 databases carry 112 keyless default-off
-rows each, so item 4a matters on FX too.
-
-### 3. Harden the V2 locator
-
-* Use the `+0xB8` pointer first on V2 as well. It names the framed start in all six
-  V2 databases, 2.005 included. Keep the erased-flash framing as the fallback and
-  as a cross-check.
-* `find_database()` no longer enforces "at least one game": a chain made only of
-  empty games is accepted, and `-x` exits 0 with no output. `db2.py` rejects it.
-  Require at least one non-empty game (`TENTH.md` §3), with an `extract_test.py`
-  fixture.
-
-### 4. Make the cartridge's behaviour visible
-
-xpcrypt converts the stored format faithfully. These are the places where a
-faithful conversion still hands back something the cart will do differently:
-
-* **a. Default-off bit on a keyless code** (old 1b; `ENGINE.md` §7). Warn when a
-  code stored with key nibble 0 has bit 3 set and its type's address is
-  dereferenced (0 3 7 8 9 B E F): the engine adds `0x08000000` to the address. This
-  affects 120 rows of Pro 2.20, 112 of FX 3.20 and 112 of FX 4.52.
-* **b. A block that declares no payload** (old 1d). Every engine hangs on it, all
-  ten, executed; German `War Games` ships two.
-* **c. A block cut short.** Input, or a cheat, that ends inside a declared payload
-  currently passes silently.
-* **d. Address bits in the key nibble of a keyless type**, e.g. `31001643` landing
-  at `0x01001643`, or 2.0081's `F21EAB7C` becoming an anchor that aborts the list.
-  The same warning family as a.
-
-All of them go in the row events `crypt_code()` already produces, printed on stderr.
-Under `-x`, give one summary per database rather than per row (Pro 2.20 alone would
-print 120).
-
-### 5. The header guard: follow the cart, and warn
-
-`7d15818` starts a block only when the header's key bits are clear after
-decryption. The cart does the opposite (`FINDINGS.md` §6.5). Its stagers classify
-by the *stored* type nibble before decrypting, and key bits 1-3 take the copy route,
-so the cart stages `51123456 6006` as a Supercode with the size as stored.
-`oracle_test.py`'s "headers with key bits 1-3" suite counts 114 rows where xpcrypt
-and the cart now disagree. No shipped database has such a header.
-
-Recommended: classify like the cart, so that `-d` output is what the cart runs, and
-warn that the header's key bits select no cipher. Then flip that suite to assert the
-cart's side. The alternative, keeping the guard and only warning, leaves `-d` and
-the cart disagreeing about which lines are payload.
-
-### 6. Warn before someone bricks a cartridge (old 3)
-
-`-r` writes ROMs. Before writing a plaintext image, model the check
-(`FINDINGS.md` §5.3b, `selfdestruct.py`):
-
-* **V2:** compare all 14 characters of `"(C) 1997/8 FCD"` against the header at
-  `*(rom + 0x7C)`;
-* **FX:** compare positions 0, 1, 2, 11, 12, 13 of `"(C) 1997-9 FCD  "`;
-* **generation:** tell V2 from FX by the module pointer's region (`0x1F…`/`0x9F…`);
-* **Pro 2.20:** recognise it by the release string at header `+0x10`; it has no
-  check.
-
-On a mismatch, warn loudly that the cart will program 96 KB over itself the first
-time a code with one of the trigger first bytes of `FINDINGS.md` §5.3b is activated
-(28 on V2, 24 on FX), or, on V2, two Megacodes at once. A stock 2.14
-image must trigger the warning, because its own header fails its own check. Test:
-the nine images (only 2.14 warns), a patched header, and 2.20. About 40 lines.
-
-### 7. Release 1.2
-
-Bump `APP_VERSION` and write the README history entry deferred since `-x`
-(`FINDINGS.md` §6.7). It covers Supercode/Megacode, type A, the closed-form ROM
-cipher, `-x` for V2 and FX, and the warnings. Also update the README's `-x` text to
-match what it reads.
-
-### 8. An optional runtime-lint mode (old 1e, corrected)
+### 1. An optional runtime-lint mode
 
 The FAQ comparison makes the seam explicit: xpcrypt validates and transforms the
 stored format, but a syntactically valid decrypted code can still be inert,
@@ -187,40 +79,25 @@ properties of the selection, type B consumes a second line, and FX differences n
 a firmware family. The first version should say when it lacks that context rather
 than infer it.
 
-### 9. Warn when a code-looking line was passed through unchanged (old 1f)
-
-`parse_code()` deliberately accepts only twelve hex digits and whitespace.
-Historical documents commonly decorate records as `$60000000 003F` or
-`00xxxxxx-yyyy`; those lines currently pass through as ordinary text, making a
-conversion appear successful even though xpcrypt did nothing. Recognise only
-narrow, unambiguous code-shaped failures and warn on stderr. Do not strip
-punctuation by default: preserving non-code text is an interface guarantee.
-
 ### Optional: `--unpack`
 
 COMP01 plus the FX descrambler in C, about 120 lines; `comp01.py` and `fxunp.py` are
-the references. With item 2's LZW decoder in place, xpcrypt could open every layer
+the references. With `lzw.c` in place, xpcrypt could open every layer
 of either generation. Useless for converting codes, so whether to do it depends on
 whether xpcrypt should be a cheat tool or a cartridge tool.
 
 ---
 
-## Done
+### Tests on `main`
 
-* **1a, the ROM seed tables.** The tables are now the two expressions read out of
-  the PC tools (`FCD.md`):
-  `dec[i] = (enc[i] ^ (u8)(i ^ ((i >> 1) + 0x45))) + (u8)((i & 0x37) ^ 0x2C)`.
-  They equal the old tables as a transform: the two spellings differ by a `^ 0x80`
-  and a `+ 0x80` at 256 offsets, which cancel. The 512-byte minimum and the block
-  cipher comment are gone.
-* **1c, type A payloads.** Every code below a type A header is payload to the end
-  of the cheat; covered by an `oracle_test.py` suite.
-* **2, `-x/--extract`.** For V2 images, plaintext or `.fcd`, from the erased-flash
-  boundary, with abbreviations expanded and a fresh block state per cheat. Since
-  `7070614` it skips empty games, which recovers 2.005's database.
-* **4, the header guard (`7d15818`).** Done as specified, but the ninth pass found
-  it diverges from the cart; see item 5 of the plan.
-* **5, the module split.** Done on `module-split` only; see item 0 of the plan.
+Deferred by choice: the differential tests stay in `research/`. If `main` gets its
+own `make check` later, the plan was golden vectors written and verified by
+`romcrypt.py` here, so the release build needs no Python.
+
+### The module split
+
+`MODULE_SPLIT.md`, on its own branch. Reviving it now means rebasing it over 1.2,
+which rewrote much of what it moved.
 
 ## Considered and rejected
 
@@ -237,7 +114,7 @@ You do not need FCD's compressor; any stream their decompressor accepts is valid
   run, not the data, which compresses like `v452d.rom`'s.
 
 Nothing needs a rebuilt ROM, and anyone who builds one is a single edited copyright
-string away from bricking a cartridge (item 6).
+string away from bricking a cartridge, which `-r` now warns about.
 
 ### Code keys 2 and 3 (`Special32` / `Special33`)
 
@@ -258,9 +135,11 @@ languages, and the vendor's encrypters agree. Settled.
 * ~~The `Makefile` passes `-s`, which clang rejects under `-Werror`~~ — done; the
   binary is stripped by `install -s` now (`FINDINGS.md` §1).
 * ~~The repo has a plain `TODO` with two lines~~ — removed in `dc66a3b`.
-* ~~`crypto.h` (then `xp_crypto.h`) guards itself with `_XP_CRYPTO_H_`~~ — done, `XP_CRYPTO_H`.
-* The version bump and README history entry are item 7; the root `check` target is
-  item 1.
+* ~~`crypto.h` (then `xp_crypto.h`) guards itself with `_XP_CRYPTO_H_`~~ — done,
+  `XP_CRYPTO_H`.
+* ~~Version bump and a README history entry~~ — done, 1.2.
+* The root `Makefile` has no `check` target; the gate lives here (see "Tests on
+  `main`").
 
 ---
 
@@ -274,7 +153,8 @@ make            # everything below, in order, from research/
 and ends in `all suites passed`. Its parts run on their own: `strict` and
 `sanitize` for the two C builds, `fuzz` for `-x` against generated malformed
 ROMs, `crypto` for the seven `oracle_test.py` suites,
-`extract` for plaintext/encrypted database extraction, `roundtrip` for `-e K | -d`
+`extract` for plaintext/encrypted database extraction, V2 and FX, `warnings` for
+the cartridge warnings, `roundtrip` for `-e K | -d`
 over every database code, `fxdb` for the FX databases, `firmware` for the nine-way
 cipher agreement, `engine` for the executed engine, `tables` and `analyses` for
 the published tables and counts. Targets that need the firmware dumps skip with a
@@ -336,6 +216,7 @@ The individual commands, for when a target needs picking apart:
 cd .. && make && cd research
 uv run python oracle_test.py ../xpcrypt      # 7 suites, expect "all good"
 uv run python extract_test.py                # synthetic plus all available ROMs
+uv run python warn_test.py                   # every warning against its finding
 uv run python fuzz_test.py ../xpcrypt        # needs an ASan build; --cases N
 uv run python roundtrip.py                   # expect "15349 code lines x 4 keys, 0"
 uv run python fcdcrypt.py                    # the .fcd image cipher; "all good"

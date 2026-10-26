@@ -8,6 +8,7 @@
 #   make            every target below
 #   make crypto     xpcrypt against the firmware's own crypto routines
 #   make extract    ROM database location, extraction and bounded decryption
+#   make warnings   the cartridge warnings, each against its finding
 #   make roundtrip  ... and against itself, over every recovered database code
 #   make encrypt    the encrypt side, against the vendor's own encrypter
 #   make fcd        the .fcd image cipher against the PC tools' own routines
@@ -68,8 +69,8 @@ need_roms = @echo '  skipped: no roms/ - drop the firmware dumps in and re-run'
 endif
 
 .PHONY: all check crypto blocks oracle extract roundtrip encrypt fcd comms firmware engine \
-	tables analyses plugin prechain fxdb rom2005 payloads typecx selfdestruct strict sanitize \
-	fuzz clean
+	tables analyses plugin prechain fxdb rom2005 payloads typecx selfdestruct warnings \
+	strict sanitize fuzz clean
 
 # Every C target builds the *same* objects and binary in the parent directory,
 # with different flags - `strict` twice over, `sanitize` with the sanitizers,
@@ -81,8 +82,8 @@ endif
 
 all: check
 
-check: strict sanitize fuzz oracle extract roundtrip encrypt fcd comms firmware engine \
-	tables analyses plugin prechain fxdb rom2005 payloads typecx selfdestruct
+check: strict sanitize fuzz oracle extract warnings roundtrip encrypt fcd comms firmware \
+	engine tables analyses plugin prechain fxdb rom2005 payloads typecx selfdestruct
 	@echo
 	@echo 'all suites passed'
 
@@ -152,6 +153,14 @@ extract:
 
 # The other half of the encrypt side: the cartridge cannot check it, so check
 # that xpcrypt decrypts what it encrypted, over every code the databases ship.
+# The warnings 1.2 added, each held to the finding it rests on: it fires on its
+# trigger, stays quiet on the clean case next to it, and under -x reports the
+# counts the research scripts measure.  Runs without roms/, widens with them.
+warnings:
+	@echo '== the cartridge warnings =='
+	@$(MAKE) -C $(ROOT) >/dev/null
+	@$(P) $(PY) warn_test.py | tail -1
+
 roundtrip:
 	@echo '== xpcrypt -e K | xpcrypt -d, every database code =='
 	@$(MAKE) -C $(ROOT) >/dev/null

@@ -27,7 +27,7 @@ def fixture_records():
         '55A936CF2ED9 34FB3457235D 34F734F4FB55')
     records += b'Inline\0\x02' + bytes.fromhex(
         'A00000000000 76621A3E5450')
-    records += b'Empty\0\x00'  # empty game (zero cheats): skipped, not fatal
+    records += b'Empty\0\x00'  # empty game (zero cheats): printed, not fatal
     records += b'Next\0\x01'
     records += b'Reset\0\x01' + bytes.fromhex('76621A3E5450')
     records += b'\xff\xff\xff\xff'
@@ -74,6 +74,10 @@ Block
 Inline
 A0000000 0000
 76621A3E 5450
+
+//=====
+
+"Empty"
 
 //=====
 
@@ -124,6 +128,18 @@ def check_fixture():
             assert b'damaged' in got.stderr, (damage, got.stderr)
             assert got.stdout == b'', damage
 
+        # A chain of nothing but empty games is not a database.
+        empty_only = bytearray(b'\xff' * 0x200)
+        empty_only[fcdcrypt.ROM_SIGNATURE_OFFSET:fcdcrypt.ROM_MIN_SIZE] = \
+            fcdcrypt.ROM_SIGNATURE
+        chain = b'A\0\x00B\0\x00\xff\xff\xff\xff'
+        empty_only[0x100:0x100 + len(chain)] = chain
+        path = root / 'empty-only.rom'
+        path.write_bytes(empty_only)
+        got = run('-x', path)
+        assert got.returncode != 0 and b'no cheat database' in got.stderr, \
+            got.stderr
+
         no_db = bytearray(b'\0' * 128)
         no_db[fcdcrypt.ROM_SIGNATURE_OFFSET:fcdcrypt.ROM_MIN_SIZE] = \
             fcdcrypt.ROM_SIGNATURE
@@ -169,8 +185,8 @@ def decrypt_cheat(lines):
 
         dec = decrypt_code(raw)
         out.append(dec)
-        if dec[0] & 7 and dec[0] >> 4 != 0xA:
-            continue
+        # A block starts on the type the code is stored with, as on the
+        # cartridge; key bits 1-3 leave the header as stored.
         if dec[0] >> 4 == 5:
             nbytes = ((dec[4] & 0xF) << 8) | dec[5]
             if nbytes:
