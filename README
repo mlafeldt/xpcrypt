@@ -14,6 +14,21 @@ for Xploder PSX.
    Version history
 ---===============---
 
+v1.2 (Oct 26 2026)
+* Decrypt and encrypt Supercode and Megacode blocks (code types 5 and 6), and
+  leave inline data blocks (type A) alone.
+* Follow the Xploder's own route table: the code types 2, A, C, and E are never
+  encrypted, and neither is a code with no room for a key.
+* Keep the "switched off by default" bit, and leave a code with an unknown key
+  as it is.
+* Add -x to print the complete cheat database of a ROM, for the Xplorer V2 and
+  the Xplorer FX alike.
+* Decrypt and encrypt ROMs of any size: the image cipher is now the formula the
+  vendor's tools use instead of two brute-forced tables.
+* Warn about codes the cartridge runs differently from what they say, and about
+  ROMs that would erase their own cartridge.
+* Drop CMake; make is all there is.
+
 v1.1 (May 10 2009)
 * Rewrote most of xpcrypt.
 * Add decryption/encryption of Xploder ROMs.
@@ -86,7 +101,10 @@ ROM needs to be decrypted or encrypted.
 
 Use -x with a plaintext ROM or an encrypted .fcd image to print its complete
 cheat database. Game names are quoted, cheat names follow on their own lines,
-and every code is decrypted.
+and every code is decrypted. Both generations of the cartridge work: the Xplorer
+V2 stores the database as it is, the Xplorer FX compresses it, and xpcrypt
+unpacks it. A game without cheats is printed too - some databases use them as
+headings or as a legend.
 
 
 ---=================---
@@ -133,6 +151,37 @@ That boundary is not in the codes themselves, and xpcrypt reads a stream of
 codes, not cheats. So it takes every code that follows the header as payload
 and leaves it exactly as it is, in both directions, and prints a warning to
 say so. Feed it one cheat at a time if you have more than one.
+
+
+---=====---
+   Warnings
+---========---
+
+xpcrypt converts codes faithfully, but some codes do something different on the
+cartridge than their text says. It warns about these on stderr and leaves the
+codes as they are:
+
+* a code that is switched off by default (bit 3 of its first byte) but carries
+  no key. The Xploder only clears that bit while decrypting, so it ends up in
+  the address, and the code writes to the wrong place. Encrypting the code with
+  any key fixes it.
+* a code whose key bits are 1, 2, or 3. They select no cipher, so the Xploder
+  reads them as part of the address - or, for a block header, takes its size as
+  stored. The first bytes 32, 82, 33, and 83 instead select two routes of the
+  Xploder's own that xpcrypt does not implement.
+* a Supercode or Megacode that declares an empty payload. It hangs the
+  cartridge's code engine.
+* a block whose payload ends before its declared length.
+* a line that looks like a code but carries a "$" or hyphens, the way old
+  documents print them. It is passed through untouched like any other text.
+
+With -x, each kind is counted and reported once for the whole database.
+
+When -r converts a ROM, xpcrypt also checks its copyright header the way the
+cartridge firmware does. A firmware that finds the header changed overwrites a
+large part of its own flash as soon as certain codes are activated, which
+destroys the cartridge. The stock Xplorer Pro 2.14 ROM fails that check on its
+own. xpcrypt warns and writes the output anyway.
 
 
 ---====---

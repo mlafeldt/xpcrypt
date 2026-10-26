@@ -31,7 +31,7 @@
 
 /* Application's name and current version */
 #define APP_NAME	"xpcrypt"
-#define APP_VERSION	"1.1"
+#define APP_VERSION	"1.2"
 
 /* Text displayed for -h option */
 #define HELP_TEXT \
