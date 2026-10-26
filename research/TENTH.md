@@ -10,14 +10,17 @@ Two findings:
 1. It is a **tenth firmware** — Xplorer UK **2.005**, 24 Nov 1998 — a real build
    older than every image in `roms/` except the 2.004 USA one, with its own cheat
    database. The corpus is called "nine firmwares" throughout the notes; this is
-   the tenth, and it has never been run through the database, engine or
-   anti-tamper suites.
+   the tenth, and until this note it had not been run through the database,
+   engine or anti-tamper suites (§4 lists the ones that take it now).
 2. **`xpcrypt -x` extracted nothing from it (now fixed, §3).** Its database is
-   complete and valid, 233 games to a clean terminator, but one game carries a
-   cheat count of zero, and both the shipped C reader and `db2.py` once treated
-   that as a fatal error that discards the whole chain. No image in `roms/` has
-   an empty game, so the hazard was never seen. The one-line tolerance in §3
-   recovers the whole database and changes nothing on the five corpus databases.
+   complete and valid - 234 game records to a clean terminator, 233 of them with
+   cheats - but one game carries a cheat count of zero, and both the shipped C
+   reader and `db2.py` once treated that as a fatal error that discards the
+   whole chain. No in-ROM chain in `roms/` has an empty game, so the hazard was
+   never seen. (The German FX 4.50 database has five, but it ships LZW-packed
+   and nothing read it until the ninth pass - `fxdb.py`.) The one-line tolerance
+   in §3 recovers the whole database and changes nothing on the five corpus
+   databases.
 
 The evidence uses the tool's own shipped file, so it needs no `roms/`. Before the
 fix in §3, the second command failed:
@@ -79,11 +82,12 @@ the point: it is a genuine sibling of the corpus, not an oddball.
 
 ---
 
-## 2. The database is complete — and unreadable
+## 2. The database is complete — and was unreadable
 
 Framed the way `db2.find_db` frames (first record after the erased-flash run), the
 chain begins at `0x25000` and parses cleanly to its `FF FF FF FF` terminator at
-`0x2FF66` — **except** the parser never gets there. Game 112 is:
+`0x2FF66` — **except** that, before §3, the parser never got there. Game record
+112 is:
 
 ```
 0002A8C5  4d 6f 74 6f 20 52 61 63 65 72 20 32 00 00        "Moto Racer 2" 00 | 00
@@ -92,22 +96,24 @@ chain begins at `0x25000` and parses cleanly to its `FF FF FF FF` terminator at
 ```
 
 An empty game: a name, a cheat count of zero, and then the next game. The chain
-continues normally after it and reaches the terminator. But the readers stop:
+continues normally after it and reaches the terminator. But both readers, as
+they were before §3, stopped there:
 
-* shipped C, `xpcrypt.c` `db_cursor_next()`:
+* shipped C, `xpcrypt.c` `db_cursor_next()` before `7070614`:
 
   ```c
   if (ncheats == 0)
-          return -1;            /* line 471 */
+          return -1;
   ```
 
-* reference, `db2.py` `parse_db()`: `if not 1 <= ncheats <= 200: raise ValueError`
+* reference, `db2.py` `parse_db()` before `6f42321`:
+  `if not 1 <= ncheats <= 200: raise ValueError`
 
-`find_database()` / `find_db()` treat that `-1`/exception as "this offset is not a
-database" and drop the **entire** chain. No other `FF FF FF FF`-preceded offset
-frames a >50-record chain (the suffix after `Moto Racer 2` is not preceded by
-erased flash), so the search ends with nothing and `-x` prints *no cheat database
-found*. One empty game costs all 233.
+`find_database()` / `find_db()` treated that `-1`/exception as "this offset is not
+a database" and dropped the **entire** chain. No other `FF FF FF FF`-preceded
+offset frames a >50-record chain (the suffix after `Moto Racer 2` is not preceded
+by erased flash), so the search ended with nothing and `-x` printed *no cheat
+database found*. One empty game cost all 233.
 
 ### What is actually there
 
@@ -119,7 +125,8 @@ the 208 (ninth pass, `AUDIT.md`).
 
 ```
                      strict            tolerant
-xteng-2005 (2.005)   none              233 games / 1668 cheats / 2365 lines   (empty: "Moto Racer 2")
+xteng-2005 (2.005)   none              234 game records (233 with cheats) / 1668 cheats / 2365 lines
+                                       (empty: "Moto Racer 2")
 
 Tekken 3:  2.005 44 cheats / 2.008 44 cheats;  identical decrypted set = True
   Infinite Health Player 1 -> 800A95E6 0082
@@ -138,6 +145,11 @@ xtjpro.dec       61 / 1619 / 1826                61 / 1619 / 1826
 USA 2.004       250 / 4048 / 4905               250 / 4048 / 4905
 ```
 
+The first column of each is distinct game *names*, which is how `db2.py` counted
+them. Records and names agree everywhere but in the USA chain: 252 game records
+under 250 names (`Bio Freaks` and `Casper` appear twice), and `xpcrypt -x` prints
+all 252. `db2.py` prints both figures now.
+
 So tolerating an empty game is free on everything already tested and unlocks the
 one image that needs it.
 
@@ -146,7 +158,8 @@ one image that needs it.
 ## 3. The fix
 
 An empty game has no codes to extract, so the right behaviour is to skip it, not
-to reject the database. Applied in two mirrored places:
+to reject the database. Applied in two places, which mirror each other except at
+one edge:
 
 * **`xpcrypt.c`, `db_cursor_next()`.** Instead of `return -1` on `ncheats == 0`,
   it reads the next game name+count in a loop until one is non-empty or the
@@ -156,11 +169,22 @@ to reject the database. Applied in two mirrored places:
 * **`db2.py`, `parse_db()`.** The `1 <= ncheats` lower bound became a `continue`
   on `ncheats == 0`, keeping the `<= 200` sanity cap.
 
+The edge is a chain of nothing but empty game records. `db2.parse_db()` still
+rejects it: it reaches the terminator with no cheat read and raises "empty". The
+C does not: `db_cursor_next()` reports a clean end once it has read any game
+record, empty or not, so `find_database()` accepts such a chain as a database of
+zero games and `-x` exits 0 and prints nothing - where its own comment says a
+candidate has to parse at least one game. No image has such a chain, so no
+extraction changes; the C is left as it is (ninth pass, `AUDIT.md`).
+
 `extract_test.py` now carries a fixture with an empty game between two real ones;
 its expected output is unchanged, so the extractor has to skip the empty game to
 pass. On the shipped `pc/ROMS/Xteng.fcd` the extractor now recovers 233 games /
 1668 cheats / 2365 lines, and the five corpus databases still extract their
-original 15349 lines / 11718 cheats.
+original 15349 lines / 11718 cheats. `rom2005.py` holds both readers to it: `-x`
+has to print all 233 games and skip the empty one, `db2.find_db()` has to find
+the chain at `0x25000`, and a walk that still rejects a zero count has to fail on
+`Moto Racer 2` and nowhere else.
 
 ---
 
@@ -168,7 +192,8 @@ original 15349 lines / 11718 cheats.
 
 * **Is an empty game valid to the cartridge, or is it corruption XLink emitted?**
   It is official shipped data in FCD's own ROM, it parses end to end, and its
-  codes match 2.008 — so a tool that drops 233 games over it is wrong regardless.
+  codes largely match 2.008 (§2) — so a tool that drops 233 games over it is
+  wrong regardless.
   Whether the cartridge *menu* lists an empty game or skips it was not read out of
   the firmware.
 * **Default-off codes in 2.005.** A rough stored-nibble count suggests 2.005 has
@@ -181,15 +206,22 @@ original 15349 lines / 11718 cheats.
   bit 3, and all of them are keyed (stored `3E`/`4E`/`7E`/`8E`), so every one loses
   the bit on decryption. Pro 2.20 is still the first V2 database with keyless
   default-off rows. The hazard is not confined to it, though: the FX 3.20 and 4.52
-  databases (`FINDINGS.md` §6.3) each carry 112 keyless default-off rows.
+  databases (`FINDINGS.md` §6.3) each carry 112 keyless default-off rows at an
+  addressed type, which `fxdb.py` asserts.
 * **Is an empty game deliberate?** Probably a placeholder. 2.008 fills `Moto Racer 2`
   with 7 cheats, and the German FX 4.50 database ships five zero-cheat records on
   purpose, as a legend ("Abkuerzungen", "ENG = Energie", …). How the menu shows
   them is still unread.
 * **The image never entered the suites.** Partly stale: `payloads.py`, `plugin.py`,
-  `typecx.py`, `selfdestruct.py` and `rom2005.py` use it now. `dbtypes.py`,
-  `engine.py`, `engineemu.py`, `oracle_test.py`, `roundtrip.py`, `fxtest.py` and
-  `fxprot.py` still do not.
+  `typecx.py`, `selfdestruct.py`, `fxdb.py` and `rom2005.py` use it now, and
+  `rom2005.py` asserts the fixed readers rather than the failure. `dbtypes.py`,
+  `engine.py`, `engineemu.py`, `fxtest.py` and `fxprot.py` still do not, and
+  `oracle_test.py`, `roundtrip.py` and `extract_test.py` keep to the five
+  in-ROM chains on purpose, so that the 15,349-line / 11,718-cheat figures the
+  notes cite stay the population they were measured on. A one-off run of the
+  oracle and round-trip suites over 2.005 and the three distinct FX databases
+  (ninth pass) passed: 10,970 more lines in 7,582 cheats, none failed and none
+  not reproduced.
 
 ## 5. Reproducing
 
@@ -198,6 +230,7 @@ original 15349 lines / 11718 cheats.
 xpcrypt -r pc/ROMS/Xteng.fcd /tmp/xteng-2005.dec
 grep -a 'release' /tmp/xteng-2005.dec | head -1     # -> release 2.005
 xpcrypt -x /tmp/xteng-2005.dec                        # -> 233 games (was: Error, before §3)
+uv run --with capstone python rom2005.py              # the whole of this note, asserted
 
 # the empty game
 xxd -s 0x2a8c5 -l 24 /tmp/xteng-2005.dec             # "Moto Racer 2" 00 00 "Moto Racer" 00 04

@@ -11,7 +11,9 @@ cartridge (see REVERSING.md). This uses it as an oracle:
   * the same for the payload of Supercode and Megacode blocks, plus the number
     of payload codes the firmware expects to follow a header;
   * a code type A header takes every code below it as raw payload, so none of
-    them may be transformed as a code of its own.
+    them may be transformed as a code of its own;
+  * a block header stored with key bits 1-3 starts no block - where the
+    cartridge would start one, which is counted rather than hidden.
 
 No ROM needed: the codes are generated. If decrypted ROMs are lying around in
 roms/, their databases are thrown in as well.
@@ -239,6 +241,49 @@ def test_empty_blocks():
     return t.done()
 
 
+def test_unkeyed_headers():
+    """Block headers stored with key bits 1-3: a known divergence, asserted.
+
+    The jump table has no route for a low nibble of 1-3, so the firmware copies
+    such a header and stages it by its *stored* type nibble - both stagers test
+    byte 0 & 0xF0 before decrypting (0x1ACCEC, 0x1AD08C in xteng.dec) - with its
+    size and payload key taken verbatim.  xpcrypt reads the key bits as a key
+    it could not apply and starts no block (FINDINGS.md 6.5), so the rows below
+    decrypt as ordinary codes.  No shipped header is stored this way.  This
+    holds xpcrypt to its rule and counts the rows where the cartridge, staging
+    a block, would decrypt them with the payload key instead."""
+    t = Test('headers with key bits 1-3')
+    good = [n for n in range(16)
+            if n not in GAP_NIBBLES and n not in BLOCK_NIBBLES]
+    differ = 0
+    for key in (1, 2, 3):
+        for off in (0x00, 0x08):
+            for payload_key in (0, 6, 7):
+                for mega in (False, True):
+                    size = random.randrange(1, 24)
+                    if mega:
+                        head = [0x60 | off | key, random.randrange(256),
+                                random.randrange(256), payload_key,
+                                size >> 8, size & 0xFF]
+                        rows = (size + DESC_LEN + 5) // CODE_LEN
+                    else:
+                        head = [0x50 | off | key, random.randrange(256),
+                                random.randrange(256), random.randrange(256),
+                                payload_key << 4, size]
+                        rows = (size + 5) // CODE_LEN
+                    below = [rand_code((random.choice(good) << 4) | 6)
+                             for _ in range(rows)]
+                    got = run([], [bytes(head)] + below)
+                    t.eq(got[0], bytes(head), 'header left as it is')
+                    for raw, mine in zip(below, got[1:]):
+                        t.eq(mine, bytes(romcrypt.decrypt(list(raw))),
+                             'row below as an ordinary code')
+                        if mine != bytes(romcrypt.decrypt(list(raw),
+                                                          payload_key)):
+                            differ += 1
+    return t.done(', %d row(s) the cartridge would stage as payload' % differ)
+
+
 def test_inline_blocks():
     """Type A: raw payload, no length field, no payload key.
 
@@ -349,6 +394,7 @@ if __name__ == '__main__':
     if not os.path.exists(XPCRYPT):
         sys.exit('no xpcrypt at %s - build it first, or pass its path' % XPCRYPT)
     bad = (test_decrypt() + test_encrypt() + test_blocks()
-           + test_empty_blocks() + test_inline_blocks() + test_databases())
+           + test_empty_blocks() + test_unkeyed_headers() + test_inline_blocks()
+           + test_databases())
     print('\n%s' % ('FAILED' if bad else 'all good'))
     sys.exit(1 if bad else 0)

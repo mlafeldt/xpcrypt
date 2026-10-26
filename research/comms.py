@@ -12,9 +12,9 @@ does, and asserts what it finds rather than printing it:
   * the cartridge's command dispatcher and jump table, out of every firmware in
     `roms/` (loaded and disassembled with `fwimage.py` / `mipscan.py`), with the
     opcodes matched against the PC side;
-  * the answer to `FINDINGS.md` section 6 item 3 - whether the wire protocol can
-    read the full 512 KB flash, including the FX cheat database above the
-    firmware.
+  * how much flash each tool reads - the DOS build 256 KB, both Windows builds
+    the full 512 KB - out of the PC binaries, and that the read command is
+    length-unbounded on the cartridge side either way.
 
     uv run --with capstone python comms.py [-v]
 
@@ -24,10 +24,16 @@ and exits 0, the same way `xlink.py` and `fxtest.py` do.
 
 What was read vs. inferred. Everything below the word "assert" was read out of a
 binary and re-derived here on each run. The one thing not checkable from these
-files is that flash physically answers reads above `0x1F040000` on real hardware
-- that needs a cart - so the 512 KB claim is stated as "the protocol imposes no
-limit", which is a fact about the code, and kept separate from "it will work",
-which is not asserted.
+files is that flash physically answers every read on real hardware - that needs
+a cart - so the read-size claims are stated as "the tool sends this length",
+which is a fact about the code, and kept separate from "it will work", which is
+not asserted.
+
+The 512 KB read is *not* what it takes to reach the FX cheat database: the ninth
+pass (`AUDIT.md`, `FINDINGS.md` §6.3) found that database LZW-packed inside every
+FX dump at `*(ROM+0x7C)+0xB8`, below the firmware's own window and not above it.
+So this file no longer treats the full dump as the thing standing between us and
+the FX codes; it is simply what FCD's own Windows tool read on every upgrade.
 """
 import glob
 import os
@@ -47,21 +53,22 @@ ATTN = 0x57
 # Opcodes the cartridge must recognise, by their ASCII letter.  Recovered
 # independently on each side and asserted equal; this is the shared contract.
 LETTERS = {
-    0x47: "read memory block  (G: addr,len -> len bytes + 16-bit checksum)",
+    0x47: "read memory block  (G: addr,len -> len bytes, then exchange a "
+          "16-bit checksum and answer OK/BG)",
     0x67: "read one byte      (g: 24-bit addr -> 1 byte)",
     0x53: "write memory block (S: addr,len,data)",
     0x54: "write mem, nibble  (T: fast 4-bit databurst write)",
     0x4F: "read mem, nibble   (O: fast 4-bit databurst read)",
     0x55: "program flash      (U: recv buffer, program over ROM, verify)",
-    0x58: "program flash      (X: as U, used by the ROM-upgrade path)",
+    0x58: "upload + execute   (X: recv buffer to a wire-given addr, jalr into it)",
     0x4E: "negotiate          (N: Level 3 comms timing calibration)",
 }
 
-# The download-ROM path hard-codes these; they are the crux of the FX question.
+# The ROM-read path hard-codes the base; the length is per build.
 FLASH_BASE = 0x1F000000          # cart flash, PSX expansion region 1
-ROM_DL_LEN = 0x40000             # 256 KB - what the vendor tool reads
-FX_DB_DESC = 0x1F07FFF8          # FX cheat-DB descriptor (FINDINGS 6.3)
-FX_DB_END = 0x1F080000           # top of the 512 KB flash
+ROM_DL_DOS = 0x40000             # 256 KB - what the DOS tool reads
+ROM_DL_WIN = 0x80000             # 512 KB - what both Windows builds read
+FLASH_END = 0x1F080000           # top of the 512 KB flash
 
 
 def _md():
@@ -209,9 +216,15 @@ def check_pc(path, verbose):
     gwrapper = enclosing(entries, ops[0x47][0])
     dl_site, dl_len = pc_rom_download(code, gwrapper)
     assert dl_site is not None, "no `read 0x1F000000` via the G wrapper"
-    assert dl_len == ROM_DL_LEN, hex(dl_len or 0)     # 256 KB, the cap
+    assert dl_len == ROM_DL_DOS, hex(dl_len or 0)     # 256 KB in the DOS build
     assert any('Downloading ROM' in s for s in strs.values())
     assert any('BackUp.FCD' in s or 'BACKUP.FCD' in s for s in strs.values())
+
+    # 'A' and 'D' are the in-game cheat activate/deactivate commands: the DOS
+    # shell sends them ("Cheats can only be (de)activated in game"), and no
+    # cartridge *menu* dispatcher handles them - they are an in-game channel, so
+    # they are not in LETTERS and not expected in the jump table below.
+    assert 0x41 in ops and 0x44 in ops, 'DOS tool sends no A/D in-game command'
 
     # opcode 0x0F is "R3000 Jump": arbitrary code execution.  Its wrapper is
     # named by the developer-shell help and the "R3000 Jump to %8.8x" line.
@@ -359,13 +372,35 @@ def check_cart(path, verbose):
     recv = cart_read_block_unbounded(ins, handlers[0x47])
     assert handlers[0x67] != handlers[0x47]
 
-    # the numeric development opcodes: 0x02..0x0F are handled by every image;
-    # 0x10 and 0x11 (register dump / string write) are a later addition, present
-    # only in the V2 2.008 builds - so they are reported, not required.
+    # 'S', 'U' and 'X' share one receive routine that branches on the opcode it
+    # already has: 'S' writes RAM, 'U' programs flash and verifies, and 'X'
+    # `jalr`s into the buffer it just received (xteng 0x1A1B2C) - a second
+    # unauthenticated code path beside 0x0F.  So 'X' is not "program flash, as U".
+    assert handlers[0x53] == handlers[0x55] == handlers[0x58], \
+        '%s: S/U/X do not share a receive routine' % path
+
+    # the numeric development opcodes: 0x02..0x0F are handled by every image.
     for op in range(0x02, 0x10):
         h = table.get(op)
         assert h and h != default, '%s: opcode 0x%02X unhandled' % (path, op)
-    ext = all(table.get(op) and table[op] != default for op in (0x10, 0x11))
+    handled = lambda op: bool(table.get(op)) and table.get(op) != default
+
+    # 0x10 and 0x11 (register dump / string write) are a later addition - absent
+    # from the 2.004 USA build and every FX one, present in the five V2 releases
+    # 2.005 through 2.20.  The command set is *not* "the same" across images, so
+    # pin the per-build differences rather than wave them through:
+    #   * the two blocks above exist iff the release is a 2.005-2.20 V2 build;
+    #   * 'P' (0x50) is a V2 command the FX builds dropped;
+    #   * the FX dispatcher is twice as wide (bound 0xC6 vs 0x66) and the Pro
+    #     builds carry extra opcodes above 0x11 - reported, as the exact set
+    #     differs by build and only the shared contract is asserted.
+    release = fw_label(path)
+    ext = handled(0x10) and handled(0x11)
+    has_1011 = release in ('2.005', '2.008', '2.0081', '2.14', '2.20')
+    assert ext == has_1011, '%s (%s): 0x10/0x11 presence unexpected' % (path, release)
+    assert handled(0x50) == (gen == 'V2'), \
+        "%s: 'P' (0x50) %s" % (path,
+                               'missing' if gen == 'V2' else 'unexpected')
 
     # opcode 0x0F: jalr to a received address
     exec_h = table[0x0F]
@@ -383,23 +418,36 @@ def check_cart(path, verbose):
     return gen, handlers, ext
 
 
-# ---------------------------------------------------------- the FX question
+# ------------------------------------------------- the Windows tool reads 512 KB
 
-def check_fx_flash_dump(pc_ops, cart_seen):
-    """FINDINGS 6.3: nobody has the 512 KB FX dump.  Establish that the wire
-    protocol reaches it and that the vendor tool simply never asks."""
-    # the read command exists and is length-unbounded on the FX firmwares - that
-    # was asserted per image in check_cart; here we tie it to the geometry.
-    assert 0x47 in pc_ops                                   # PC can send it
-    assert FX_DB_DESC < FX_DB_END == FLASH_BASE + 0x80000
-    # what the vendor reads (256 KB) stops *below* the FX database descriptor,
-    # which is exactly why the region has never been dumped:
-    assert FLASH_BASE + ROM_DL_LEN <= FX_DB_DESC
-    assert ROM_DL_LEN == 0x40000 and 0x80000 == 2 * ROM_DL_LEN
-    # a full read is the same command with a bigger length - build the bytes.
-    full = struct.pack('>BBII', ATTN, 0x47, FLASH_BASE, 0x80000)
-    assert full == b'\x57\x47\x1f\x00\x00\x00\x00\x08\x00\x00'
-    return full
+# Both Xlink95 builds read the whole flash on an upgrade: `push 0x80000; push
+# 0x1F000000` feeds the 'G' wrapper, and the result is encrypted to BackUp.FCD.
+# Found as the byte sequence that pushes those two immediates back to back.
+WIN_FULL_READ = struct.pack('<BIBI', 0x68, ROM_DL_WIN, 0x68, FLASH_BASE)
+
+
+def check_win(path, verbose):
+    """A Windows build reads 512 KB from 0x1F000000 and backs it up as an .fcd.
+
+    The DOS tool reads 256 KB (check_pc); these read the whole flash, so FCD's
+    own Windows tool made full FX dumps on every upgrade - the 512 KB image was
+    never the thing standing between anyone and the FX database.
+    """
+    # the .text section is the lowest-based one; search it for both patterns.
+    base, code = min(xlink.load(path).items())
+    reads = [base + m.start()
+             for m in re.finditer(re.escape(WIN_FULL_READ), code)]
+    assert reads, '%s: no `push 0x80000; push 0x1F000000` full-flash read' % path
+    blob = open(path, 'rb').read()
+    assert b'ROMS\\BackUp.FCD' in blob, '%s: no BackUp.FCD backup path' % path
+    # the upload side also has a 512 KB mode: `push 0x80000; push 0x80080000`
+    # (the second Windows staging base), beside the DOS tool's 256 KB-only path.
+    upload = struct.pack('<BIBI', 0x68, ROM_DL_WIN, 0x68, 0x80080000)
+    assert upload in code, '%s: no 512 KB upload mode' % path
+    if verbose:
+        print('  %-22s 512 KB read @%08X, BackUp.FCD, 512 KB upload mode'
+              % (os.path.basename(path), reads[0]))
+    return True
 
 
 # --------------------------------------------------------------------- main
@@ -418,10 +466,18 @@ def main(argv):
     if os.path.exists(pc[0]):
         print('%s: DOS X-Link, parallel-port protocol' % pc[0])
         pc_ops = check_pc(pc[0], verbose)
-        print('  %d opcodes recovered; the eight shared letters and the '
-              '0x02-0x11 dev set all present' % len(pc_ops))
+        print('  %d opcodes recovered; the eight shared letters, the 0x02-0x11 '
+              'dev set and the in-game A/D all present' % len(pc_ops))
     else:
         print('pc/XLink.exe absent - PC side skipped')
+
+    wins = [p for p in ('pc/Xlink95.exe', 'pc/Xlink95-19990702.exe')
+            if os.path.exists(p)]
+    for p in wins:
+        check_win(p, verbose)
+    if wins:
+        print('  %d Windows build(s) read the full 512 KB from %08X and back it '
+              'up as ROMS\\BackUp.FCD' % (len(wins), FLASH_BASE))
 
     cart_seen = {}
     v2 = fx = ext = 0
@@ -432,9 +488,13 @@ def main(argv):
         fx += gen == 'FX'
         ext += has_ext
     if roms:
-        print('%d firmware images carry the same dispatcher and command set '
-              '(%d V2, %d FX); %d also handle the 0x10/0x11 extension'
-              % (len(roms), v2, fx, ext))
+        # the dispatcher shape is shared; the command *set* is not - FX doubles
+        # the table width and drops 'P', the five 2.005-2.20 V2 builds add
+        # 0x10/0x11, and the Pro builds add opcodes above that (all pinned in
+        # check_cart).  Only the eight letters are common to every image.
+        print('%d firmware images share the wire dispatcher (%d V2, %d FX); the '
+              'eight command letters are in every one, %d also handle the '
+              '0x10/0x11 extension' % (len(roms), v2, fx, ext))
         # the opcodes match across the wire: every letter the PC sends is a
         # non-default jump-table entry in every firmware
         if pc_ops:
@@ -446,18 +506,17 @@ def main(argv):
     else:
         print('roms/ empty - cartridge side skipped')
 
-    # the closing question, only when both halves and an FX image are present
-    if pc_ops and fx:
-        full = check_fx_flash_dump(pc_ops, cart_seen)
-        print('FX 512 KB flash: reachable. The read-memory command is '
-              'length-unbounded on all %d FX images;' % fx)
-        print('  the tool reads only %08X..%08X (256 KB), stopping below the '
-              'FX DB descriptor at %08X.' % (FLASH_BASE, FLASH_BASE + ROM_DL_LEN,
-                                             FX_DB_DESC))
-        print('  A full dump is the same command with length 0x80000: '
-              'send %s' % full.hex())
-        print('  then read back 0x80000 bytes + a 16-bit checksum '
-              '(0x1F000000..0x1F080000, the whole flash incl. the cheat DB).')
+    # the read command is length-unbounded on the cart (asserted per image in
+    # check_cart); the length is the tool's choice, and FCD's Windows tool chose
+    # the whole flash.  The FX cheat database is inside that image, LZW-packed at
+    # *(ROM+0x7C)+0xB8 (FINDINGS 6.3 / AUDIT ninth pass), not in the free flash
+    # above the firmware - so a full dump was never the obstacle it looked like.
+    if fx:
+        print('FX flash: the read command is length-unbounded on all %d FX '
+              'images, and a 512 KB read is just %08X len 0x%X on the wire '
+              '(%s...), which FCD\'s own Windows tool issued.'
+              % (fx, FLASH_BASE, ROM_DL_WIN,
+                 struct.pack('>BBII', ATTN, 0x47, FLASH_BASE, ROM_DL_WIN)[:4].hex()))
 
     print('all comms-protocol assertions passed')
     return 0

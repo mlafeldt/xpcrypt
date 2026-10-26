@@ -10,24 +10,25 @@ into PlayStation kernel RAM at `0x00000A00` on its way out, hooking a BIOS entry
 point so that it runs on every interrupt for as long as the game does.
 
 That blob is the code engine. Its instruction set is the sixteen Xploder code
-types, and it implements eleven of them in fifty-odd instructions - a
+types, and it implements eleven of them in about a hundred instructions - a
 fall-through chain of `bne`s, two branch targets, no jump table.
 
 **Part I** is what the engine is and what each code type does. **Part II** is how
 it was found, including the dead ends. `REVERSING.md` is the companion for the
 cipher; `FINDINGS.md` has the conclusions of that work.
 
-Everything here was read out of the cartridge ROMs, and the runtime half was then
-**executed**: the engine of each of the nine firmwares is run in a MIPS
-interpreter over a synthetic patch list, and every memory access it makes outside
-its own code, its stack and the cartridge is recorded (§5, §15). So what a code
-type does *on the console* is an observation
-rather than a reading. What the cartridge does to a code *before* the console
-sees it - the four staging passes, which rewrite types A and D and build the
-control blocks for 5 and 6 - is not executed; the emulator is fed their output,
-constructed by hand. Those parts are marked where they appear and are collected
-in §13. Every semantic carries the annotated disassembly behind it and, where
-the shipped cheat databases have specimens, real codes to go with it.
+Everything here was read out of the cartridge ROMs, and then **executed**. The
+engine of each of the nine firmwares is run in a MIPS interpreter over a
+synthetic patch list, and every memory access it makes outside its own code, its
+stack and the cartridge is recorded (§5, §15). So what a code type does *on the
+console* is an observation rather than a reading. What the cartridge does to a
+code *before* the console sees it - the four staging passes, which rewrite types
+A, C and D, normalise addresses and build the control blocks for 5 and 6 - is
+executed too, out of all ten images, over a handful of selections (§13). What is
+not executed is the menu that builds a selection: the passes are handed
+descriptor and pointer arrays constructed by hand. Every semantic carries the
+annotated disassembly behind it and, where the shipped cheat databases have
+specimens, real codes to go with it.
 
 Scripts: `engine.py` finds and reads the engine in any ROM, `engineemu.py` runs
 it, `dbtypes.py` surveys the shipped databases, and `typecx.py` is the file about
@@ -38,66 +39,49 @@ Xplorer FX - and the five code databases they carry (§10). `typecx.py` and
 database; nothing in it moves any result here.
 
 
-## The four findings that matter
+## The five findings that matter
 
 **1. The engine is not always in the firmware image.** Three of the nine images
-keep the blob inside the packed firmware; the other six keep it unpacked
-elsewhere in the ROM, so an image-only search finds it in a third of the
-corpus and the search has to cover both (§12).
+keep the blob inside the packed firmware (four of ten, with 2.005); the other six
+keep it unpacked elsewhere in the ROM, so an image-only search finds it in a
+third of the corpus and the search has to cover both (§12).
 
-**2. Five of the sixteen types have no runtime handler.** Types 1, 2 and C have
-no handler anywhere and reach the engine only to be ignored; A and D are meant to
-be rewritten during staging into types 5 and F, and reach the engine unhandled
-when they are not. That is not decay - type 1 is *used* for it, 134 times in the
-shipped databases, as the second line of a slide code (§4).
+**2. Five of the sixteen types have no runtime handler, and staging decides what
+three of them mean.** Types 1 and 2 have no handler and nothing in staging
+touches them: they reach the engine and are ignored. A, C and D have no handler
+either, but the staging passes rewrite them before the engine sees them - A into
+a 5, a lone D into an F at the head of the list, and every C0 and every other D0
+into a type 7 guard. Only a C or D whose flag nibble survived decryption reaches
+the engine as itself, and does nothing. Type 1's emptiness is *used*: 134 times
+in the shipped databases, as the second line of a slide code (§4, §13).
 
 **3. All nine firmwares implement the same eleven types, in the same order, with
 the same instructions - except type 4.** Slow motion is present in the five
 V2/Pro builds and missing from all four FX builds. Executing all nine over the
-same 26 cases finds that one difference and nothing else (§5, §6).
+same 26 cases finds that one per-type difference (§5, §6). The FX engines also
+disarm the hardware breakpoint on every BIOS B() call, which is not about any
+code type and is checked on its own.
 
 **4. Shipping default-off codes without a cipher broke 120 codes.** The
 default-off bit survives decryption for any code stored with key nibble 0, and
 the engine's address mask keeps it - so the address gains `0x08000000`. Executed
 on both halves (§7).
 
-> **Ninth pass (`AUDIT.md`): staging pass 4 rewrites codes, and that overturns
-> finding 2 and the type C, D and E sections.** After decrypting each line with key −1,
-> pass 4 calls a normaliser, its only caller (`xteng` `0x1AA9EC` decrypt, then
-> `0x1AA9F8` → `0x1A835C`). It exists in all ten images (V2 `0x1A7E40`-`0x1A9978`, FX
-> `0x80031C08`-`0x80032398`), and all ten give the same output under emulation.
-> Matching on the whole first byte, it does this:
-> * `C0`, `D0` and `70` become `70`, with the address forced even;
-> * `30` at an odd address becomes `E0` at address − 1;
-> * `80` at an odd address becomes `30`, and so `E0`;
-> * `00` at a misaligned address becomes `80`;
-> * `B0` gets bit 0 of byte 3 cleared.
->
-> What that changes:
-> * A `C0` line is a working **equality guard** on every cartridge. Only
->   `CD`/`C6`/`C8` are inert, and every shipped filler or disabled line is one of
->   those. Under emulated staging, 2.14's jokers `C006A2EA B7FF` and
->   `C0007572 FFFE` become `70…` guards.
-> * A `D0` that is not hoisted to F (two or more D lines, or a D beside an F)
->   becomes type 7, not an inert D.
-> * Type E *is* used, by staging: it emits 1,156 E codes for the five
->   databases (1,093 odd-address type 3, 63 odd-address type 8).
->
-> So three of the four types with no cipher route (A→5, C0→7, E generated) are
-> exactly staging's types, and "designed independently" (§7) does not survive. The
-> likely reason is that the engine reads addresses with `lhu`, which traps on an odd
-> address. That is an inference from the MIPS I spec, not observed. The idiom scans
-> of §13 cannot see whole-byte compares, the gap `AUDIT.md`'s post-fix review warned
-> about. Staging *was* executed in this pass (Ghidra's emulator on 2.008, Pro 2.14
-> and FX 3.20, plus the normaliser under unicorn in all ten), so "never executed"
-> (§16) is out of date. Further executed results: a second enabled Megacode wrecks
-> the whole list. Pass 1 stops after the first, and the second's mask row is hoisted
-> as an F anchor, decrypted as key 7, which runs the copyright check on the way. The
-> malformed MGS record swallows the three cheats enabled after it and builds a
-> 13,816-word copy over kernel RAM from `0xA0000040`. FX also clears DCIC on *every*
-> B() call (`mtc0 $zero, $7` in a delay slot at `0xA04`), a difference
-> `engineemu.py` filters out of its traces. The §4 "Uses:" counts are the
-> pre-correction ones. §8's are right: type 1 134, 3 2988, 7 589, 8 10689, F 245.
+**5. The last staging pass normalises every code, and type E is its output.**
+After decrypting a line, pass 4 rewrites it so that every address the engine
+reads as a halfword is even: a byte or halfword write at an odd address becomes a
+type E one byte down, a misaligned word write a halfword write, and a
+conditional's address or a slide's step is made even. None of the 15,349 shipped
+lines is stored as type E; 1,156 of the 14,939 codes among them are type E by
+the time the console sees them. This, and the C and D rewrites of finding 2, are
+whole-byte compares that no type-nibble scan can see (§13).
+
+> **Ninth pass (`AUDIT.md`).** Findings 2, 3 and 5, the type C, D and E sections,
+> §6, §7, §13 and §16 are rewritten: staging pass 4 normalises codes - `C0` and
+> unhoisted `D0` become type 7, odd-address byte writes type E - and staging is
+> now executed (`engineemu.py`). Also corrected: the §4 "Uses" counts, §7's
+> key-nibble table, the installer sizes and stores, the FX list layout, the FX
+> breakpoint disarm on every B() call, and the `WHB.` listing in §12.
 
 
 # Part I - what the engine is
@@ -124,9 +108,10 @@ keeps the default-off bit so that codes survive a round trip. A code stored *in
 the clear* keeps whatever was there, which has consequences (§7).
 
 That leaves 24 address bits. The engine masks the first word with `0x0FFFFFFF`
-before using it as a pointer, so the top nibble is available in principle, but
-after decryption it is always zero. Addresses are therefore KUSEG - `0x0009CAC8`
-means `0x8009CAC8`, the same physical RAM.
+before using it as a pointer, so the flag nibble lands in bits 24 to 27 of the
+address. It is zero for any code that went through a cipher route; a code stored
+in the clear keeps it, which is §7's defect. Addresses are therefore KUSEG -
+`0x0009CAC8` means `0x8009CAC8`, the same physical RAM.
 
 The 16-bit value field is what most types write. Type 0 writes it as a 32-bit
 word, zero-extended; there is no code type that carries a full 32-bit constant.
@@ -177,10 +162,13 @@ so `*(u32*)0x1F00007C + 0xBC` is the address of the *slot*, and the list base is
 what that slot holds - two dereferences, not one. Hard-coding the V2 value made
 the emulator read cartridge ROM as a code list on the Pro firmwares (§15).
 
-The whole 0x900-byte image is programmed into flash with the cartridge's own
-flash writer, so the engine reads it straight out of the cartridge. The
-listings below are from `xteng.dec` and so say `0x1F022600`; read that as "the
-list base" throughout.
+Staging builds the image in a zeroed 0x1000-byte buffer, and the cartridge's own
+flash writer programs it at the list base, so the engine reads it straight out of
+the cartridge. V2 and Pro write the whole 0x900 bytes, title included. FX writes
+the 0x800 bytes of list, payload and control block there and the 0x100-byte title
+separately, so the `+0x800` row of the layout above is V2/Pro only. The listings
+below are from `xteng.dec` and so say `0x1F022600`; read that as "the list base"
+throughout.
 
 **The four staging passes** run over the enabled lines before that
 (`0x1ACC74`, `0x1AD010`, `0x1ACB48` and an inline loop at `0x1AA9BC`, in
@@ -188,10 +176,10 @@ list base" throughout.
 
 | pass | function | what it consumes |
 |---|---|---|
-| 1 | `0x1ACC74` | type 6 - builds the Megacode control block; skips over type 5 payload rows |
+| 1 | `0x1ACC74` | type 6 - builds the Megacode control block (the first one only); skips over type 5 payload rows |
 | 2 | `0x1AD010` | type 5 and type A - copies payload bytes to the buffer, emits a pointer |
 | 3 | `0x1ACB48` | type F and type D - hoists one of them to the front of the list |
-| 4 | inline | everything else, in order |
+| 4 | inline | everything else, in order - each line normalised first (`0x1A835C`, §13) |
 
 **The engine** is a 0x24C-byte position-dependent blob. `0x1A00AC` in
 `xteng.dec` installs it:
@@ -209,6 +197,15 @@ list base" throughout.
 001A0138  sw    $v0, 0x9f0($zero)    ; *(u32*)0x9F0 = 0x001A3F70
 001A0140  sw    $v0, 0x700($zero)    ; *(u32*)0x700 = -1
 ```
+
+That is the V2 installer, and it copies exactly the 0x24C bytes of the blob. The
+Pro and FX installers sit in the raw ROM (Pro 2.20 at ROM `0x22474`, FX 3.20 at
+ROM `0xC1A0`) and use an inclusive end bound, so they copy 0x250 - the blob and
+the word after it. Only the four V2 installers (2.004, 2.005, 2.008, 2.0081)
+make the last two stores, to `0x9F0` and `0x700` (§9). The FX installer instead
+may patch the engine it has just copied: if the byte at `0x8000002F` is set, it
+stores a zero over the instruction at `0xA08`, which is FX's breakpoint disarm
+(§6).
 
 `0xB0` is the PSX kernel's B-function trampoline. Four words - the whole stub -
 are replaced with a jump to `0xA00`:
@@ -234,9 +231,11 @@ straight to `0x5E0`, which is where the original stub went:
 
 `$t1` holds the BIOS function number by convention, so the codes run on every
 `ReturnFromException` - which is to say on every interrupt, several times a
-frame. That is the whole timing model: there is no separate "apply once" pass,
-and a code that has to be written repeatedly and a code that only has to be
-written once are the same code.
+frame. (That the kernel reaches B(17h) through the `0xB0` entry on every
+interrupt is the BIOS's behaviour; nothing in these images shows it.) That is the
+whole timing model: there is no separate "apply once" pass, and a code that has to
+be written repeatedly and a code that only has to be written once are the same
+code.
 
 ## 3. The dispatcher
 
@@ -268,13 +267,14 @@ written once are the same code.
 0C20  ...                                ; "stop": restore and leave
 ```
 
-Three things follow from the shape of this loop and are worth having in mind
+Four things follow from the shape of this loop and are worth having in mind
 before reading the individual types.
 
 * The chain is a **fall-through chain, not a jump table**. A type with no `bne`
   of its own simply falls off the end and reaches "next code" having done
-  nothing. That is not an error path - it is how types 1, 2, C and D are
-  disposed of, and type 1 is used deliberately for it (see type 1).
+  nothing. That is not an error path - it is how types 1 and 2, and a C or D
+  that staging left alone, are disposed of, and type 1 is used deliberately for
+  it (see type 1).
 * Two labels do the work: `0xC18` advances by one entry and loops, `0xC20`
   abandons the rest of the list for this pass. Conditionals reach `0xC18` with
   an extra `addiu $a0, $a0, 8` in the delay slot, which is how they skip the
@@ -282,6 +282,11 @@ before reading the individual types.
 * `$a2` is loaded once, before the type is known. For most types it is the
   16-bit value; for types 5 and 6 the staging pass put a *cartridge pointer*
   there instead.
+* Every entry's address is read as a **halfword** before its type is known: the
+  type F test's `lhu` sits in the delay slot of its `bne` (`0xA94`), and type 7's
+  does too (§5). An odd address there is an address-error exception on an R3000
+  - by the MIPS I rules, not observed here - inside the B(17h) hook. Staging's
+  normaliser makes the addresses it can even, which is what type E is for (§13).
 
 ## 4. The instruction set
 
@@ -304,14 +309,16 @@ rows.
 Uses: 1. The odd one out in the corpus - `002A79A0 3FF4` in the German
 Command & Conquer 2 entry, and its address is past the end of a 2 MB PSX. The
 type works; nobody used it. A 32-bit write of a value that can only be 16 bits
-wide is not very useful, which is presumably why.
+wide is not very useful, which is presumably why. A type 0 at an address that is
+not a multiple of four never reaches the engine as one: staging turns it into a
+16-bit write, or a byte write at an odd address (§13).
 
 ### Type 1 - nothing
 
 No handler in any of the nine firmwares. A type 1 line falls through the whole
 chain and advances to the next entry.
 
-Uses: 114 - and every one of them is deliberate. Type 1 is the conventional
+Uses: 134 - and every one of them is deliberate. Type 1 is the conventional
 **second line of a type B slide code** (see type B): the slide handler reads that line
 as data through `$a0`, but the loop still advances by only eight bytes, so the
 second line is then dispatched on its own. Giving it a type with no handler is
@@ -353,7 +360,9 @@ Note the missing branch after the store: type 3 falls into the type E test,
 which cannot match because `$v0` is still 3. The chain is written throughout on
 that assumption.
 
-Uses: 2681, second only to type 8.
+Uses: 2,988, second only to type 8. 1,093 of them have an odd address, and
+staging hands those to the engine as type E one byte down (§13) - the same
+store, by a handler whose dispatcher reads stay aligned.
 
 ```
 Xplorer 2.008 UK | Everybody's Golf | Unlock All Courses
@@ -450,7 +459,7 @@ The loop copies a byte *before* it decrements and tests, so a count of zero
 becomes `0xFFFFFFFF` and the copy never ends. Two shipped cheats declare one
 (§7).
 
-Uses: 42 headers, of which 40 declare a payload. The payload is usually a patch
+Uses: 44 headers, of which 42 declare a payload. The payload is usually a patch
 written in MIPS - which is what makes Supercodes worth the trouble.
 
 ```
@@ -574,10 +583,16 @@ The descriptor row is *payload*, not a code line: it is decrypted with the
 payload key like every other row, and its first nibble means nothing. Reading it
 as a code is what xpcrypt used to get wrong.
 
-Uses: 9 headers, of which 8 declare a payload that fits inside their cheat entry.
-The ninth is malformed: `Metal Gear Solid - Jp / Verliere Chaff` in the German
-database is a one-line cheat whose only line decrypts to a header declaring
-55,261 payload bytes - 9,212 rows that are not there.
+Uses: 11 headers, of which 10 declare a payload that fits inside their cheat
+entry. The eleventh is malformed: `Metal Gear Solid - Jp / Verliere Chaff` in the
+German database is a one-line cheat whose only line decrypts to a header
+declaring 55,261 payload bytes - 9,212 rows that are not there. Enabled, it does
+not fail quietly. Pass 1 takes its descriptor and mask from the next two selected
+lines without looking at them - the next enabled cheat's name line and first
+code - and the rest of that cheat as payload, so the next cheat is swallowed; and
+the control block it writes tells the engine to copy 13,816 words to
+`0xA0000040` upward, over the exception vectors and the engine itself. Executed
+in all ten images (§13).
 
 ### Type 7 - execute next code if equal
 
@@ -598,7 +613,9 @@ Both arms go to `0xC18`, which itself advances by eight. The unequal arm
 advances twice, so exactly one following code is skipped. Nesting therefore does
 not work: a conditional guards one line, never a group.
 
-Uses: 491. Usually a "the game is on the right screen" test.
+Uses: 589. Usually a "the game is on the right screen" test. Staging forces its
+address even (§13), and produces more of them: every C0 line and every D0 that
+is not hoisted reaches the engine as a type 7.
 
 ```
 Xplorer 2.008 UK | Gran Turismo (Euro) | B. License
@@ -625,7 +642,8 @@ front of the block entry (§7).
 0B70  A4A60000  sh    $a2, ($a1)
 ```
 
-Uses: 9062 - two out of every three codes in the corpus.
+Uses: 10,689 - seven codes in ten. 63 of them have an odd address; staging turns
+each into a byte write of the value's low byte, a type E one byte down (§13).
 
 ```
 Xplorer 2.008 UK |  To Kill |  Health
@@ -647,9 +665,10 @@ Xplorer 2.008 UK |  To Kill |  Health
 0B40  24840008  addiu $a0, $a0, 8      ; equal -> skip it
 ```
 
-The mirror image of type 7, same skip-exactly-one rule.
+The mirror image of type 7, same skip-exactly-one rule. Unlike type 7, staging
+leaves its address alone.
 
-Uses: 36.
+Uses: 43.
 
 ### Type A - inline data block
 
@@ -679,10 +698,10 @@ field plus every following line's six raw bytes into the payload buffer:
 001AD4D8  24420002  addiu $v0, $v0, 2         ; count = 6 * lines + 2
 ```
 
-The rewrite replaces the whole first byte with `0x50`, so a type A that is staged
-is the one type whose flag nibble cannot leak into the address (§7). One that is
-*not* - the rewrite is a staging pass, not a property of the type - reaches the
-engine as an unhandled type and does nothing.
+The rewrite replaces the whole first byte with `0x50`, so a type A is the one
+type whose flag nibble cannot leak into the address (§7). Pass 2 takes every line
+whose stored type nibble is A, flag nibble or not, so on a cartridge no type A
+reaches the engine; one put in a patch list by hand would do nothing.
 
 Where a Supercode declares its length, a type A block runs to **the end of the
 cheat entry**: the copy loop stops at the first line whose list descriptor is not
@@ -729,7 +748,10 @@ sign-extended, so a slide can walk backwards or count down. The writes are
 When the loop finishes, control reaches `0xC18`, which advances by *one* entry.
 The second line is then dispatched normally - see type 1 for why that is safe.
 
-Uses: 136.
+Uses: 159. Staging forces the address step even (§13). 25 of the 159 slides use
+a type 8 or type 3 second line instead of a type 1, and that line then also runs
+as an ordinary write after the slide - harmless in every shipped case, because it
+repeats the slide's first write.
 
 ```
 Xplorer 2.008 UK | G-Police | All weapons
@@ -740,13 +762,24 @@ Xplorer 2.008 UK | G-Police | All weapons
 
 Thirteen consecutive weapon slots, four bytes apart, all set to 0x30.
 
-### Type C - nothing
+### Type C - equality guard, by staging
 
-No handler in any firmware and no route in the cipher's jump table, so type C
-lines are stored and read back verbatim - which is exactly what makes it useful
-as a type that does nothing. The 27 lines in the databases are three different
-uses of that. Most of them are filler: the information is in the *cheat name*,
-and the code line only exists because a cheat entry needs at least one.
+```
+C0aaaaaa vvvv       staged as 70aaaaaa vvvv:
+                    if (*(u16 *)addr != value) skip the next code;
+Cfaaaaaa vvvv       f != 0: nothing
+```
+
+No engine handler and no route in the cipher's jump table, so type C lines are
+stored and read back verbatim. What gives them a meaning is the last staging pass:
+its normaliser (§13) rewrites a line whose decrypted first byte is exactly `C0` as
+`70`, address forced even, so a C0 is a type 7 by the time the console sees it.
+The match is on the whole byte. A C with any flag nibble - `CD`, `C6`, `C8` -
+passes through untouched, reaches the engine and does nothing, and that is what
+makes C useful as a type that does nothing, as long as the nibble is set. The 27
+lines in the databases are three different uses of the type, and only one of them
+is a C0. Most of them are filler: the information is in the *cheat name*, and the
+code line only exists because a cheat entry needs at least one.
 
 ```
 Xplorer Pro 2.20 UK | Nuclear Strike | *****ISLAND STRIKE*****
@@ -759,10 +792,11 @@ Xploder V2 2.004 US | Wipeout  |  Turbo Level 1
 ```
 
 The Wipeout pair is not filler at all: it is a code switched off by giving it a
-type nothing implements, with its ciphertext left intact. The two stored lines
-share their three ciphertext address bytes and differ in the type nibble and the
-last byte, and putting an `8` back in that nibble and decrypting settles what the
-difference is - see the end of this section.
+type that, with a flag nibble set, nothing implements, its ciphertext left
+intact. The two stored lines share their three ciphertext address bytes and
+differ in the type nibble and the last byte, and putting an `8` back in that
+nibble and decrypting settles what the difference is - see the end of this
+section.
 
 The Japanese Pro database uses type C for something else entirely - joker codes:
 
@@ -780,12 +814,11 @@ Xplorer Pro 2.14 JP | ワールドスタジアム2 | 上+R1+×で速フォーク
 
 Those values decode exactly as PlayStation pad masks, active low: `0xB7FF` is
 `~(R1 | cross)`, `0xBDFF` is `~(R2 | cross)`, `0xB7EF` is `~(R1 | cross | up)` -
-and the cheat names say R1+×, R2+× and up+R1+×. The type C line is a
-button test guarding the write below it, in the shape of a type 7 conditional.
-
-None of the nine firmwares implements it - nor the tenth, nor any classifier
-outside the engine in any of them (`typecx.py`). On these cartridges the guard
-is skipped and the write below it happens unconditionally.
+and the cheat names say R1+×, R2+× and up+R1+×. The type C line is a button test
+guarding the write below it, and it works as one. All six jokers are stored `C0`,
+the cipher copies them, and Pro 2.14's own staging passes emit `C006A2EA B7FF` as
+`7006A2EA B7FF` (executed, §13): the write happens while the pad halfword at that
+address equals the mask, that is, while exactly those buttons are held.
 
 Three things `typecx.py` settles about the 27 lines. **The Wipeout pair is a
 disabled code, and the ciphertext proves it**: put an `8` back in the type nibble
@@ -794,47 +827,54 @@ and out comes `8013C5BA FF00` - the address of the type 8 line below it exactly,
 value `FF00` where the live one writes `FF09`. Four for four across the four
 Wipeout entries. **The filler lines are one line copied and edited**: all
 seventeen of them read `CD E?`, in three databases, so they are a habit rather
-than seventeen decisions. **And the Japanese joker masks are not FCD's.**
+than seventeen decisions - and a habit that keeps them inert, since a `C0` would
+have been staged as a live guard. **And the Japanese joker masks are not FCD's.**
 `XLink.exe` prints its own "PlayStation Joypad Values" table, and that table is
 the pad halfword *byte-swapped* - `FFFE` is L2, `FEFF` is Select, every entry the
-hardware bit plus eight. The Japanese type C values decode the other
-way round: `C0007572 FFFE` is the cheat `セレクトボタンでカギGET！`
-("get the key with SELECT") and `C0007572 FEFF` is `L2ボタンでカギ消える！`.
-Six for six under the raw hardware layout, none out of six under FCD's. The
-same database tests the pad FCD's way five times over, with type 7 and the
-*active-high* masks straight out of that table - `L1` is `0004`, `L2+R2` is
-`0003` - so the type C codes and the type 7 codes in one database came from two
-different hands. Which is what the `(X-T用)` / `(X-Tのみ)` ("for X-T" / "X-T
-only") markers elsewhere in that database are for: it was compiled from a code
-list that covered more than this cartridge.
+hardware bit plus eight. The Japanese type C values decode the other way round:
+`C0007572 FFFE` is the cheat `セレクトボタンでカギGET！` ("get the key with
+SELECT") and `C0007572 FEFF` is `L2ボタンでカギ消える！`. Six for six under the
+raw hardware layout, none out of six under FCD's. The same database tests the pad
+FCD's way five times over, in other games, with type 7 and the *active-high* masks
+straight out of that table - `L1` is `0004`, `L2+R2` is `0003`. So the type C
+codes and the type 7 codes in one database follow two conventions: two hands,
+which the `(X-T用)` / `(X-Tのみ)` ("for X-T" / "X-T only") markers elsewhere in
+that database would fit - it was compiled from a code list that covered more than
+this cartridge - or two games that keep their pad state differently. The firmware
+does not say which.
 
-Uses: 27.
+Uses: 27 - 17 filler (`CD`) and 4 disabled codes (`C6`), all inert, and 6 jokers
+(`C0`), all live.
 
-### Type D - single anchor code
-
-```
-D0aaaaaa vvvv       promoted to type F, at the head of the list
-```
-
-No engine handler. Staging pass 3 scans the enabled lines for one:
+### Type D - single anchor code, or a guard
 
 ```
+D0aaaaaa vvvv       the only D in the selection, and no F: hoisted as F0aaaaaa vvvv
+                    otherwise: staged as 70aaaaaa vvvv, a type 7 guard
+```
+
+No engine handler. Staging pass 3 scans the enabled lines for one, testing the
+*stored* bytes, before anything is decrypted:
+
+```
+001ACB9C  91040000  lbu   $a0, ($t0)          ; the stored first byte
 001ACBA4  308300F0  andi  $v1, $a0, 0xf0
 001ACBA8  14620008  bne   $v1, $v0, 0x1acbcc  ; v0 = 0xF0: a type F line?
+001ACBAC  308300FF  andi  $v1, $a0, 0xff      ; (delay slot: v1 = the whole byte)
 001ACBB4  A0A00000  sb    $zero, ($a1)        ;   consume it
-001ACBC0  304200FE  andi  $v0, $v0, 0xfe      ;   force an even address
+001ACBC0  304200FE  andi  $v0, $v0, 0xfe      ;   clear bit 0 of stored byte 3
 001ACBC4  0806B30E  j     0x1acc38            ;   and hoist it
 001ACBCC  240200D0  addiu $v0, $zero, 0xd0
-001ACBD0  14620005  bne   $v1, $v0, 0x1acbe8  ; a type D line?
+001ACBD0  14620005  bne   $v1, $v0, 0x1acbe8  ; exactly D0 - the whole byte?
 001ACBD8  1D40001F  bgtz  $t2, 0x1acc58       ;   a second one -> give up entirely
 001ACBE0  254A0001  addiu $t2, $t2, 1
 001ACBE4  01205821  move  $t3, $t1            ;   remember where it was
 ...
 001ACC00  15420015  bne   $t2, $v0, 0x1acc58  ; exactly one D, or nothing happens
 001ACC24  A1030000  sb    $v1, ($t0)          ; rewrite its type byte to 0xF0
-001ACC28  304200FE  andi  $v0, $v0, 0xfe      ; force an even address
+001ACC28  304200FE  andi  $v0, $v0, 0xfe      ; clear bit 0 of stored byte 3
 001ACC38  0C06B2C7  jal   0x1acb1c            ; shift the list up by two words
-001ACC4C  0C06B2A2  jal   0x1aca88            ; and emit it at index 0
+001ACC4C  0C06B2A2  jal   0x1aca88            ; and decrypt and emit it at index 0
 ```
 
 `0x1ACB1C` copies every existing entry two words further along, so the promoted
@@ -843,17 +883,32 @@ else on every pass. Since type F aborts the whole list on a mismatch, one type D
 line gates every enabled cheat at once.
 
 The rules are asymmetric and worth stating plainly. A type F line is hoisted if
-it is the first one found, whatever else is in the list. A type D line is hoisted
-only if it is the *only* D in the whole enabled selection - a second one makes the
-pass give up, and both then reach the engine as type D, which has no handler and
-does nothing.
+it is the first one found, whatever else is in the list, and it is found by its
+type nibble. A type D line is hoisted only if its stored first byte is exactly
+`D0` and it is the *only* such line in the whole enabled selection. Every other
+D0 - a second one, or one beside an F - is left in place, and pass 4's normaliser
+then turns it into a type 7 guard over the line below it (executed, §13). An
+encrypted D (stored `D4` to `D7`) is never hoisted, but it decrypts to `D0` and
+becomes a type 7 the same way. Only a D stored with a low nibble the cipher does
+not scrub - `D1` to `D3`, which take the copy route, or `D8` and up in the clear -
+reaches the engine as a type D, and does nothing.
 
-Uses: 3, all in the Xplorer Pro 2.20 database.
+The even address is made on the stored bytes, which is right for a line stored in
+the clear and wrong for an encrypted one: clearing bit 0 of a ciphertext byte
+changes the decryption. Three shipped anchors have that bit set, all key 4 and
+all in the USA database - `F425BD7F D32A` twice in Diablo, decrypting to
+`F00047AC 0001`, and Golden Nugget's `F4257FAF 25E6`. Hoisted, the USA firmware
+emits the first as `F00047AD 0707` (executed): an odd address, which the R3000
+traps on, and the wrong value - an anchor that cannot match. If one of those
+three is the first type F in the selection, no code in it runs.
+
+Uses: 3, all in the Xplorer Pro 2.20 database, each stored `D0` and alone in its
+cheat.
 
 ```
 Xplorer Pro 2.20 UK | Sentinel Returns - MUL | L1+SEL gives 20 Energy
-    D01A5C00 0880      <- reaches the engine as F01A5C00 0880, first in the list
-    801A5A38 0014
+    D01A5C00 0880      <- reaches the engine as F01A5C00 0880, first in the list,
+    801A5A38 0014         if it is the only D enabled - as 701A5C00 0880 if not
 ```
 
 ### Type E - 8-bit write, one byte up
@@ -869,10 +924,14 @@ E0aaaaaa 00vv       *(u8 *)(addr + 1) = value;
 ```
 
 Type 3 with an offset of one - the high byte of the halfword at `addr`, on a
-little-endian machine. Present and working in all nine firmwares.
+little-endian machine. Present and working in all nine firmwares, and the type
+the last staging pass emits for every byte write at an odd address: a type 3 at
+`addr` - or a type 8 or misaligned type 0, reduced to one - comes out as a type E
+at `addr - 1`, so the engine's halfword reads of the address stay aligned (§13).
 
-Uses: 0 in the recovered corpus (§8). Like type A and type 2 it has no cipher
-route, so it would be stored in the clear by whatever wrote it.
+Uses: 0 stored - no shipped line is a type E, and like A and 2 it has no cipher
+route. But 1,156 of the shipped codes reach the console as one: 1,093 type 3 and
+63 type 8 lines with an odd address.
 
 ### Type F - anchor: abort everything on a mismatch
 
@@ -894,7 +953,7 @@ hoisting in pass 3, that makes it a whole-session guard: the cartridge checks
 that the disc in the drive is the game the codes were written for, and if it is
 not, it applies nothing.
 
-Uses: 231. Mostly named "Auto Activation", and 179 of them are in the Xploder
+Uses: 245. Mostly named "Auto Activation", and 189 of them are in the Xploder
 USA database, which uses the mechanism far more heavily than the European ones.
 
 ```
@@ -913,11 +972,11 @@ vector table are stubbed and named in the source; everything else, including the
 type 4 delay helper, runs for real. Anything outside the modelled map is recorded
 rather than silently read as zero, which is what makes the `!` lines meaningful.
 
-What it does *not* run is the staging passes: it is handed word pairs and control
-blocks that are already staged. Type A's rewriting, type D's hoisting and
-promotion rule, the moving of conditionals in front of a block, and the
-construction of a type 5 or 6 control block are all read out of the disassembly,
-not executed (§13).
+The 26 cases are handed word pairs and control blocks that are already staged,
+so each is about one type and nothing else. The same script then runs staging on
+its own, out of the same nine images plus 2.005: ten selections through all
+four passes, and 29 codes through the pass-4 normaliser alone. That half is in
+§13; its output is at the end of the listing below.
 
 ```
 $ uv run --with capstone python engineemu.py
@@ -970,18 +1029,51 @@ C + default-off   all 9  lh 08100000! | lh 08100000!
 7 miss, list end  all 9  lh 00100000=9999 | lh 00100000=9999 | lh 00100100=0 |
                          lh 00100100=0 | sh 00100100=BEEF
 
+FX entry clears DCIC on every B() call, B(17h) and B(33h) alike: english-452.dec,
+english.dec, german-450.dec, v452d.rom;
+    never on V2/Pro.  Taken out of the per-type traces above; the FX installer
+    nops it when 0x8000002F is set
+
+staging, executed: 10 firmwares x 10 selections, 29 codes through the normaliser
+pass-4 normaliser                  all 10 as expected
+C0, D0 and odd addresses           all 10  7006A2EA 0000B7FF | 8006E9C0 000003E7 |
+                                           70100000 00001234 | 80100100 0000BEEF |
+                                           70100200 00005678 | E0100400 000000AB | ...
+one D: hoisted as an F             all 10  F01A5C00 00000880 | 80100000 00000001 | ...
+an F and a D: the D is a 7         all 10  F0100000 00001234 | 80100000 00000001 |
+                                           701A5C00 00000880 | 801A5A38 00000014
+guards in front of blocks          all 10  70100000 0000AAAA | 50102000 P+0 |
+                                           D0100000 00000001 | 50103000 P+A | ...
+two Megacodes                      all 10  F01FE3C9 0000120F | 60000000 CTRL |
+                                           80100000 00000001 | 60000000 00000004 | ...
+MGS Verliere Chaff                 all 10  60000000 CTRL | 80100004 00000004
+a hoisted encrypted F              all 10  F000857D 000003FD | 801E26A2 0000FFFF
+a 507-byte Supercode               all 10  50100000 P+0 | 80100002 00000002
+... with a 6 in its 43rd row       by build
+    5  rom(s) Xploder V2,xteng.dec,xtger.dec RUNAWAY
+    4  rom(s) english-45,english.de,german-4 60000000 CTRL | 11111111 00001111 | ...
+    1  rom(s) xtepro.dec                     60000000 CTRL | 50100000 P+0
+a Supercode longer than its cheat  by build
+    5  rom(s) Xploder V2,xteng.dec,xtger.dec RUNAWAY
+    4  rom(s) english-45,english.de,german-4 80100006 00000006 | 80100008 00000008
+    1  rom(s) xtepro.dec                     70100000 0000AAAA | 50102000 P+0
+
 2 of 26 cases differ between firmwares
 ```
 
 (`!` marks an access outside the PlayStation's 2 MB of RAM. The two differing
-cases are the same difference twice: type 4 is not implemented on FX.)
+cases are the same difference twice: type 4 is not implemented on FX. The FX
+breakpoint disarm is checked apart from the 26, by entering each engine with
+B(17h) and with B(33h) over an empty list.)
 
 Every runtime semantic in §4 comes out of that run. Five things it shows that
 reading the chain does not:
 
-* **Type D really is inert.** "D inert on a miss" seeds a value the anchor does
-  *not* match, and the code below it still fires. At run time a type D line gates
-  nothing; only the staging pass gives it meaning, by turning it into a type F.
+* **Type D is inert in the engine.** "D inert on a miss" seeds a value the anchor
+  does *not* match, and the code below it still fires. At run time a type D line
+  gates nothing - but staging never hands the engine a D0: it hoists a lone one as
+  a type F and turns the others into type 7 (§13). Only a D whose flag nibble
+  survived decryption reaches the engine as a D.
 * **Nearly every code dereferences its own address twice before its type is
   known**, and one reads it three times. The type F and type 7 handlers put their
   `lhu` in the `bne` delay slot, so an entry that gets past both is read twice
@@ -1005,7 +1097,9 @@ reading the chain does not:
   armed from the descriptor.
 * **Three boundary cases go wrong** - a Supercode and a Megacode of declared
   length zero, which hang, and a conditional at the end of the list, which steps
-  over the terminator and dispatches whatever is behind it. See §7.
+  over the terminator and dispatches whatever is behind it. The last needs a list
+  with something behind its terminator, which staging only leaves at full
+  capacity. See §7.
 
 ## 6. Support across the nine firmwares
 
@@ -1028,8 +1122,8 @@ cases (§5). This table is measured three ways over, not sampled.
 | 9 if not equal | yes | yes | yes | yes | yes | yes | yes | yes |
 | A inline data | staging only | staging only | staging only | staging only | staging only | staging only | staging only | staging only |
 | B slide | yes | yes | yes | yes | yes | yes | yes | yes |
-| C no-op | - | - | - | - | - | - | - | - |
-| D anchor | staging only | staging only | staging only | staging only | staging only | staging only | staging only | staging only |
+| C guard (C0 → 7) | staging only | staging only | staging only | staging only | staging only | staging only | staging only | staging only |
+| D anchor (→ F or 7) | staging only | staging only | staging only | staging only | staging only | staging only | staging only | staging only |
 | E 8-bit write +1 | yes | yes | yes | yes | yes | yes | yes | yes |
 | F anchor | yes | yes | yes | yes | yes | yes | yes | yes |
 
@@ -1039,7 +1133,7 @@ dispatch chain is even in the same order, `F 4 B 7 9 3 E 8 0 5 6`, with the FX
 builds simply missing the `4` link. Slow-motion codes are silently dead on an FX
 cartridge.
 
-Two differences that are not differences in the type system:
+Three differences that are not differences in the type system:
 
 * **where the engine lives.** The three older V2 images carry it inside the
   packed firmware and copy it out; the two Pro images and all four FX images
@@ -1047,11 +1141,20 @@ Two differences that are not differences in the type system:
 * **where it reaches into the cartridge.** Three word-sized addresses on the
   V2/Pro side - the per-pass callback, the patch list, the type 4 helper - plus,
   on FX, a different way of finding all of them and a different enable flag.
+* **when it disarms the breakpoint.** FX puts `mtc0 $zero, $7` - DCIC = 0 - at
+  `0xA08`, the delay slot of its first branch, the test for B(17h), so it runs
+  on every BIOS B() call the game makes, codes or no codes. A Megacode's
+  breakpoint is armed again only by the next ReturnFromException pass with codes
+  switched on. V2 and Pro touch DCIC only in the type 6 handler. The FX installer
+  can take the instruction out again, storing a zero over it when the byte at
+  `0x8000002F` is set (§2). `engineemu.py` checks this apart from the 26 type
+  cases - B(17h) and B(33h), all four FX images and no other - and keeps it out
+  of their traces.
 
-Those two differences are in the blob itself, so it is *not* byte-identical
-across the corpus. All nine blobs are 0x24C bytes and SHA-256 puts them in three
-groups: the three V2 images, the two Pro images, the four FX images. A
-word-by-word diff says what separates them.
+The last two are in the blob itself, so it is *not* byte-identical across the
+corpus. All nine blobs are 0x24C bytes (the Pro and FX installers copy one word
+more, §2) and SHA-256 puts them in three groups: the three V2 images, the two
+Pro images, the four FX images. A word-by-word diff says what separates them.
 
 V2 against Pro is three instructions, all of them support-module addresses that
 moved with the generation:
@@ -1066,19 +1169,24 @@ Offsets are from the start of the blob, which runs at RAM `0xA00`. Each is the
 low half of a `lui $r, 0x1F02` pair, so the callback is `0x1F0230B0` on V2 and
 `0x1F0250B0` on the Pro, and the type 4 helper `0x1F0230A0` / `0x1F0250A0` -
 tracking where each generation puts its support module. The enable gate is *not*
-among them: both generations read bit 0 of the cartridge port at `0x1F060000`. V2 against FX is 124 words, because FX loads a support
-module pointer from `0x1F00007C` and forms every one of those addresses off it
-(callback at `+0xB0`, a second callback at `+0x100` on the way out, and the list
-base *loaded from* the slot at `+0xBC` - the slot holds the base, it is not the
-base), gates on a byte at RAM `0x178` instead of the port, and drops the type 4
+among them: V2 and Pro both read bit 0 of the cartridge port at `0x1F060000`.
+V2 against FX is 124 words, because FX loads a support module pointer from
+`0x1F00007C` and forms every one of those addresses off it (callback at `+0xB0`,
+a second callback at `+0x100` on the way out, and the list base *loaded from* the
+slot at `+0xBC` - the slot holds the base, it is not the base), gates on a byte at
+RAM `0x178` instead of the port, clears DCIC on entry, and drops the type 4
 handler entirely - which shifts everything after it.
 
 What is identical is the per-type behaviour, once type 4 is set aside.
 
-The staging side is even more uniform. Enumerating `andi rX, rY, 0xf0` - the
-idiom this compiler emits to isolate a type nibble - finds 13 to 15 occurrences
-per image, nine of which sit next to a constant the scan can read, and those nine
-name exactly the same set in all nine images:
+The staging side is uniform in what it classifies and how it normalises, and not
+in how it fails. The pass-4 normaliser is the same instructions in all six
+V2/Pro images and the same behaviour in all ten under execution (§13). A
+Supercode that declares more payload rows than its cheat has is handled three
+ways (§7). And the classifying constants are the same everywhere. Enumerating
+`andi rX, rY, 0xf0` - the idiom this compiler emits to isolate a type nibble -
+finds 13 to 15 occurrences per image, nine of which sit next to a constant the
+scan can read, and those nine name exactly the same set in all nine images:
 
 ```
 $ uv run --with capstone python engine.py -s
@@ -1087,23 +1195,26 @@ english.dec                  13 andi sites,  9 read, types 5 6 7 9 A D F
 ... and the rest
 ```
 
-Blocks, anchors, conditionals - and nothing else. The addresses move between
-builds; the constants do not.
+Blocks, anchors, conditionals. The addresses move between builds; the constants
+do not.
 
-Two limits on what that is worth. The scan does not rule out a classifier written
-some other way - a shift, a different mask, a range test, a jump table - so it
-enumerates one shape, not every classifier. And it does not resolve every
-occurrence of its own idiom: the remaining four to six per image compare against
-a register loaded further back than the window, or are not classifying a code at
-all. The union holds at every window size tried (6, 16, 32 and 64 instructions
-back, 67 to 81 of the 124 occurrences resolved), which is the reason to believe
-it - not the count.
+Two limits on what that is worth. The scan does not rule out a classifier
+written some other way - a shift, a different mask, a range test, a jump table -
+so it enumerates one shape, not every classifier, and there is one it misses:
+the pass-4 normaliser compares whole bytes and tests 0, 3, 7, 8, B, C and D
+without an `andi` (§13). And it does not resolve every occurrence of its own
+idiom: the remaining four to six per image compare against a register loaded
+further back than the window, or are not classifying a code at all. The union
+holds at every window size tried (6, 16, 32 and 64 instructions back, 67 to 81
+of the 124 occurrences resolved), which is the reason to believe it - not the
+count.
 
 ## 7. Interactions and traps
 
-The ones about the staging passes - conditionals moved with a block, type A's
-extent, one anchor per session, the list's capacity - are read out of the
-disassembly; the rest are executed (§5, §15).
+All of these are executed: the engine-side ones by the 26 cases of §5, the
+staging-side ones - conditionals moved with a block, one anchor per session, two
+Megacodes, a Supercode longer than its cheat - by the staging runs of §13. Type
+A's extent is the one still only read.
 
 **Payload rows are not codes.** The rows following a type 5, 6 or A header are
 data. Their first nibble is whatever the payload happens to contain, and reading
@@ -1127,11 +1238,21 @@ below a type A header in the same cheat entry becomes payload.
 
 **One anchor per session.** Only the first type F, or the single type D, is
 hoisted. Further type F lines stay where they are and still work - they just
-abort the list from that point on rather than up front.
+abort the list from that point on rather than up front. Further D lines become
+type 7 guards over the line below them.
 
-**The list is capacity-limited.** Entries occupy the first `0x400` bytes - 128
-pairs - with payload bytes from `+0x400` and the Megacode control block at
-`+0x780`. There is room for exactly one Megacode.
+**The list is capacity-limited, and nothing checks it.** Entries occupy the first
+`0x400` bytes - 128 pairs - with payload bytes from `+0x400` and the Megacode
+control block at `+0x780`. None of the four passes tests either bound. There is
+room for exactly one Megacode, and a second is worse than dropped: pass 1 stages
+the first type 6 it meets and returns, so a second one's rows stay selected and
+the later passes take them for codes. Executed with two keyless Megacodes, in
+all ten images: pass 3 hoists the second one's mask row `FFFFFFFC 4444` as a type
+F anchor, decrypting it as a key-7 code on the way - which runs the copyright
+check of `FINDINGS.md` §5.3b - and pass 4 emits its header as a raw
+`60000000 00000004`, an entry that would read its control block from RAM `0x4`.
+The anchor comes out as `F01FE3C9 120F` and all but certainly mismatches, so with
+two Megacodes enabled no code runs at all.
 
 **A block that declares no payload runs away.** Both copy loops copy one unit
 *before* they decrement the count and test it, so a declared length of zero wraps
@@ -1158,19 +1279,46 @@ For a *crypto* stream the right reading is the one `xp_parse_block()` and
 an ordinary code, which it plainly is here. That is not what the cartridge does
 with it. No zero-length type 6 was found in the corpus.
 
+**A Supercode longer than its cheat is handled three ways.** Pass 2 copies a
+Supercode's payload rows while their descriptors say "enabled code line". When one
+does not - the cheat ran out of lines first - the builds part company, executed
+in all ten:
+
+* V2 2.004, 2.005, 2.008, 2.0081 and Pro 2.14 spin on a `j .` (`0x1AD270` in
+  `xteng.dec`). The cartridge hangs in the menu, on the way to the game.
+* Pro 2.20 jumps to the epilogue one instruction too late, past the `move` that
+  sets its return value, and returns `0x18` as the list length. The later passes
+  append after twelve entries' worth of zeros, so every code staged after the
+  block sits behind a terminator and never runs.
+* FX drops the block and the guard in front of it and carries on.
+
+No shipped Supercode is long enough to find out. The type 6 stager checks the
+same thing and stops quietly in every build - but only after the descriptor and
+mask, which it never checks at all (see type 6 for what that does).
+
 **Every code is dereferenced before its type is known.** The type F and type 7
 handlers issue their `lhu` from the `bne` delay slot, so the engine reads a
 halfword from the code's address for *every* entry that gets past them, whatever
 its type - including the types it goes on to ignore, and including type 4, whose
 handler is uninterested in the address. §5 has the exact counts. A code with a
 bad address therefore makes bad loads before it makes a bad store, which matters
-for the next item.
+for the next item - and a code with an *odd* address makes a misaligned one,
+which an R3000 raises an address error for. That is what the pass-4 normaliser
+is for (§13). It covers what it can recognise: types 0, 3, 7, 8, B, C and D with
+a zero flag nibble. A type 9, an F that is not hoisted, a Supercode's
+destination and any row whose flag nibble survived are left as they are. Four
+shipped rows still have an odd address after staging: Pro 2.20's `3805DA51 0002`
+and `380C7ACF 00C0`, the USA's `31001643 500F` and 2.0081's filler
+`CDEEC037 595F`.
 
 **A conditional at the end of the list steps over the terminator.** Types 7 and 9
 skip by reaching `0xC18` with an extra `addiu $a0, $a0, 8`, and nothing checks
 what is being skipped. If the entry it skips is the zero word that ends the list,
 the walk carries on into whatever is behind it. Executed: with a word pair
-planted past the terminator, all nine engines dispatch it as a code.
+planted past the terminator, all nine engines dispatch it as a code. Staging
+builds the list in a zeroed buffer (`0x1AA928` in `xteng.dec`), so behind a
+terminator there is another zero pair - unless the list is full, and then what is
+behind it is the payload area.
 
 **The default-off bit lands in the address of an unencrypted code.** The flag
 nibble is bits 24 to 27 of `word0`, and the engine masks `word0` with
@@ -1205,13 +1353,13 @@ The Xplorer Pro 2.20 database has the bit set on 133 of its 2,910 code lines.
 Three different numbers come out of those 133 and they are not interchangeable:
 
 ```
-133  rows with the default-off bit set
-121  of those with key bits 0, so the bit survives into the address
+133  rows with the default-off bit set - and every one keeps it through decryption
+121  of those stored with key bits 0: the copy route keeps byte 0
 120  of those 121 whose handler then uses the wrong address
        77 type 8, 31 type 3, 12 type 7
   1  of those 121 is a type 4, whose handler ignores the address
  12  of the 133 are type C rows with key bits 5 - no cipher route, so the
-       whole flag nibble survives, and nothing implements type C anyway
+       whole flag nibble survives, and a C with a flag nibble does nothing
 ```
 
 So: **120 lines store or compare at the wrong address**, and all 133 make
@@ -1253,6 +1401,16 @@ Same cheat, same intended address - `0x1287A0` on one cartridge and
 `0x081287A0` on the other. It breaks inside a single cheat, too: Bust A Groove
 "Always Win P2" is `7806879C 0000` followed by `3006879C 0001`, so the
 conditional tests `0x0806879C` and the write it guards goes to `0x0006879C`.
+The flagged rows also escape the normaliser, which matches whole bytes: a `38` or
+a `78` is neither `30` nor `70`, so two of the type 3 rows reach the engine at an
+odd address as well.
+
+Bit 3 is the case that ships 120 times, but any flag nibble that survives the
+copy route lands in the address the same way. The USA's `31001643 500F`, the one
+code with no room for a key, stores a 1 there and writes to `0x01001643`. In
+2.0081, Alundra's `F21EAB7C 00FF` carries a 2 - key 2 has no route for type F -
+and becomes an anchor on `0x021EAB7C`, which would abort the whole list whenever
+it is the first F enabled.
 
 Where the defect sits is a question about seams, not about the engine. The
 engine strips the type nibble and trusts that the flag nibble is already gone;
@@ -1261,16 +1419,22 @@ clearing it in between. The cheapest fix is one instruction in the engine: the
 address is 24-bit, so the mask should be `0x00FFFFFF`.
 
 What kept it latent is narrower than "the earlier databases were encrypted",
-which is the obvious story and the wrong one. Counting stored key nibbles:
+which is the obvious story and the wrong one. Counting the stored key nibbles of
+the dispatched code rows (`defaultoff.py` asserts every cell):
 
 ```
-                       clear   key 6   key 4   clear + off bit
-Xplorer 2.008 UK           -   2,137       -     116 (key 6 + off)
-Xplorer 2.0081 DE          3   2,371       -      66 (key 6 + off)
-Xplorer Pro 2.14 JP    1,826       -       -       0
-Xplorer Pro 2.20 UK    2,693      84       -     121  <- the broken ones
-Xploder V2 2.004 US        1   3,050     293      66 (key 6 + off)
+                       clear   key 6   key 4   clear + off   key 6 + off   other
+Xplorer 2.008 UK           -   2,767       -             -           121       -
+Xplorer 2.0081 DE          -   2,371       -             -            66       3
+Xplorer Pro 2.14 JP    1,826       -       -             -             -       -
+Xplorer Pro 2.20 UK    2,693      84       -           121             -      12
+Xploder V2 2.004 US        -   4,007     552             -           311       5
+                                                         ^ the broken ones
 ```
+
+"Other" is everything that is neither clear nor key 4 or 6: 2.0081's `F2` line,
+its key-5 Megacode header and one `CD`; Pro 2.20's twelve `CD` lines; the USA's
+`31` and four `CD`.
 
 Pro 2.20 is not the first database in the clear - Pro 2.14 is entirely in the
 clear, one release earlier - and it is not entirely in the clear itself, since 84
@@ -1298,16 +1462,28 @@ count as `((hi & 0xF) << 8) | (lo + 5)` where pass 2 uses `+`:
 `lo + 5` carries into bit 8 when `lo >= 0xFB`, and then `or` produces `hi | 1`
 where `+` produces `hi + 1`. Those differ only when `hi` is **odd**; for an even
 `hi`, including zero, the two agree. So the bug needs `lo >= 0xFB` *and* an odd
-`hi` - a payload of 251 to 255 bytes, or 507 to 511, and so on - and pass 1 then
-skips the wrong number of lines. Present in all nine firmwares; no recovered
-database has a Supercode that triggers it.
+`hi` - a payload of 507 to 511 bytes, or 1,019 to 1,023, and so on; 251 to 255
+is safe - and pass 1 then skips 256 bytes' worth of lines too few, and reads a
+payload row as a line of its own. That only matters if the row starts with a 6:
+pass 1 then stages a Megacode out of the payload, consuming rows pass 2
+expects. Executed in all ten, with a 507-byte Supercode whose 43rd row starts
+`60`: the V2 builds and Pro 2.14 hang (the overrun above), Pro 2.20 stages the
+bogus Megacode and cuts the list short, FX stages it and turns the rest of the
+payload into codes. Without the 6, the same Supercode stages normally. No
+recovered database has a Supercode that triggers it.
 
-**Which types the cipher covers is a separate question.** The decrypt routine's
-244-entry jump table gives no route to the types 2, A, C and E, so codes of those
-types are stored in the clear (`XP_KEYED_TYPES = 0xABFB` in `crypto.c`). That
-set does not line up with what the engine implements: E is a working write
-instruction that is never encrypted, while 1 - which does nothing at all - is.
-The two mechanisms were designed independently and it shows.
+**Which types the cipher covers is a separate question, but not an unrelated
+one.** The decrypt routine's 244-entry jump table gives no route to the types 2,
+A, C and E, so codes of those types are stored in the clear (`XP_KEYED_TYPES =
+0xABFB` in `xp_crypto.c`). That set does not line up with what the engine
+implements, and it was easy to read it as designed independently: E is a working
+write instruction that is never encrypted, while 1 - which does nothing at all -
+is. It lines up with staging instead. A is rewritten into a 5, C0 into a 7, and E
+is what staging itself emits for an odd-address byte write - an opcode nobody
+needs to store. Three of the four routeless types are staging's. Only 2 has no
+part anywhere, and D, which staging also rewrites, does have a route - so the
+table is not simply "the staging types" either. What the corpus shows is the
+overlap, not the reason for it.
 
 ## 8. Usage in the shipped databases
 
@@ -1318,7 +1494,10 @@ excluded.
 erased-flash boundary rather than resynchronizing at a later printable suffix.
 That yields the complete record chain present in each image: 15,349 lines,
 14,939 of them dispatched codes. It is still a five-ROM corpus rather than proof
-about every database ever shipped, so a zero means "none in this corpus".
+about every database ever shipped, so a zero means "none in this corpus". (The
+FX images carry LZW-packed databases too - `AUDIT.md`, ninth pass - which are
+not counted here.) The types are the *stored* ones; what the console is handed
+differs by the staging rewrites of §13.
 
 | type | 2.008 UK | 2.0081 DE | Pro 2.14 JP | Pro 2.20 UK | V2 2.004 US | total |
 |---|---|---|---|---|---|---|
@@ -1340,8 +1519,9 @@ about every database ever shipped, so a zero means "none in this corpus".
 | F | 14 | 31 | 0 | 11 | 189 | 245 |
 
 Types 8 and 3 are 92% of the dispatched codes. Everything else is a rounding
-error, and three of the sixteen types - 2, A and E - do not appear anywhere in
-the corpus.
+error, and three of the sixteen types - 2, A and E - are stored nowhere in the
+corpus. E is still the type 1,156 of these codes have when the console runs
+them, because staging makes every odd-address type 3 and type 8 one.
 
 The type 5 and type 6 rows count *headers*, and three of those headers are
 malformed: two of the 44 type 5 entries declare a payload of zero bytes and one
@@ -1382,7 +1562,8 @@ with the patch list. `0x9F0237C8` first walks a table in PSX kernel RAM at
 9F0237DC  lbu   $v0, 0x703($zero)   ; entry 0's flag byte gates the whole table
 9F0237E4  addiu $v1, $zero, 0x80
 9F023804  beq   $v0, $v1, 0x9f023818
-9F023810  j     0x9f023878          ; not 0x80 -> skip straight to the link loop
+9F023810  j     0x9f023878          ; not 0x80 -> one more test, for 0x30, then
+                                    ;   neither -> skip straight to the link loop
 9F023818  lbu   $v1, 2($s2)         ; <- per entry: a 24-bit address
 9F02381C  lbu   $v0, 1($s2)
 9F02382C  lbu   $v0, ($s2)
@@ -1396,13 +1577,18 @@ with the patch list. `0x9F0237C8` first walks a table in PSX kernel RAM at
 
 then falls into the link-port command loop. So a host on the other end of the
 cable can poke memory on every interrupt without going near the cheat database.
-The engine's installer disables it:
+The V2 engine installer disables it:
 
 ```
-001A0140  sw    $v0, 0x700($zero)   ; = -1, so 0x703 reads 0xFF, not 0x80
+001A0140  sw    $v0, 0x700($zero)   ; = -1, so 0x703 reads 0xFF, neither 0x80 nor 0x30
 ```
 
-**And one slot is reserved and never used.** The same installer writes
+The Pro and FX installers make no such store. Their callbacks walk the same table
+(`lbu $v0, 0x703($zero)` at ROM `0x25C90` in `xtepro.dec`, `0x56AC` in
+`english.dec`), and their support modules write `0x703` elsewhere; what leaves the
+table disarmed on those builds was not followed.
+
+**And one slot is reserved and never used.** The V2 installer also writes
 
 ```
 001A0138  sw    $v0, 0x9f0($zero)   ; = 0x001A3F70
@@ -1410,9 +1596,9 @@ The engine's installer disables it:
 
 into the four bytes immediately below the engine - `0x9F0` is where the
 trampoline sits in the source image but is *not* part of what gets copied to
-`0xA00`. `0x001A3F70` is `jr $ra; nop`, an empty function. Nothing in any of the
-nine images reads `0x9F0`. A hook slot, initialised to a no-op, for something
-that was never wired up or was removed.
+`0xA00`. `0x001A3F70` is `jr $ra; nop`, an empty function. Only the four V2
+images write it, and nothing in any of the ten reads `0x9F0`. A hook slot,
+initialised to a no-op, for something that was never wired up or was removed.
 
 ## 10. Firmware corpus
 
@@ -1426,15 +1612,17 @@ that was never wired up or was removed.
 | `english.dec` | 3.20 | Xplorer FX | ROM `0x0063C` |
 | `german-450.dec` | 4.50 | Xplorer FX German | ROM `0x0063C` |
 | `english-452.dec`, `v452d.rom` | 4.52 | Xplorer FX | ROM `0x0063C` |
+| `pc/ROMS/Xteng.fcd` (the tenth) | 2.005 | Xplorer UK | firmware image `0x001A348C` |
 
 Located mechanically, by the four-word trampoline `lui $t0, 0 / addiu $t0, $t0,
 0xa00 / jr $t0 / nop` that gets copied over the BIOS entry point at `0xB0`. The
-three oldest images keep the engine inside the packed firmware; the rest keep it
-unpacked in the ROM. All nine blobs are 0x24C bytes and fall into three
-byte-distinct groups - V2, Pro, FX. V2 and Pro differ in three words, all of them
-support-module addresses; FX differs in 124, because it reaches them through a
-support-module pointer - the patch list twice removed, in a slot at `+0xBC` -
-gates on RAM instead of the port, and has no type 4 handler (§6).
+V2 images - the three oldest of the nine, and 2.005 - keep the engine inside the
+packed firmware; the rest keep it unpacked in the ROM. All ten blobs are 0x24C
+bytes and fall into three byte-distinct groups - V2 (2.005 included), Pro, FX. V2
+and Pro differ in three words, all of them support-module addresses; FX differs in
+124, because it reaches them through a support-module pointer - the patch list
+twice removed, in a slot at `+0xBC` - gates on RAM instead of the port, clears
+DCIC on entry, and has no type 4 handler (§6).
 
 Addresses in the listings above are from `xteng.dec` unless stated otherwise;
 engine listings use the RAM addresses the blob runs at, cartridge-side listings
@@ -1462,9 +1650,9 @@ and is.
 
 At `0x1BF67C` in `xteng.dec`, immediately after the 244 crypto entries - so
 immediately that a jump-table scanner reports one contiguous run of 281 words.
-Six distinct targets, dispatched by masking an input byte with `0x26` after
-testing it against `0x18`. It looks exactly like an opcode table with an operand
-width field.
+Seven distinct targets - six handlers and a default - dispatched by masking an
+input byte with `0x26` after testing it against `0x18`. It looks exactly like an
+opcode table with an operand width field.
 
 It is the code *entry* screen. The byte it dispatches on is a per-line descriptor
 in the cartridge's UI list (`0x22` game, `0x02` cheat name, `0x00` code line,
@@ -1478,10 +1666,11 @@ never appears next to a decrypted code anywhere.
 ### 11.3 The exception handler at ROM `0x23500`
 
 Searching all nine ROMs for `rfe` (`0x42000010`) finds exactly one aligned
-instance per V2 image, inside a 4 KB module at ROM `0x23000` that also holds
-`mtc0` sequences, a register dump and the string "BK". An exception handler that
-saves every register and prints them is a debugger, not a cheat engine - and this
-one talks to `0x1F060000`, the Xplorer's PC link port.
+instance per V2 and Pro image, inside a 4 KB module at ROM `0x23000` (`0x25000`
+on the Pro builds) that also holds `mtc0` sequences, a register dump and the
+string "BK". An exception handler that saves every register and prints them is a
+debugger, not a cheat engine - and this one talks to `0x1F060000`, the Xplorer's
+PC link port.
 
 It is not wasted: the engine calls into that module, and the search ended up
 mapping the whole vector table - see §9, which is where code type 4 turns out to
@@ -1493,29 +1682,30 @@ with the cheat database at all.
 The firmware writes a signature into PSX RAM:
 
 ```
-001A0788  lui   $a1, 0x8000
-001A078C  ori   $a1, $a1, 0x30
-001A0794  lw    $v0, ($a1)
-001A0790  lui   $v1, 0x5748          ; 'WH'
-001A0798  ori   $v1, $v1, 0x422e     ; 'B.'
+001A0E68  lui   $v0, 0x5748          ; 'WH'
+001A0E6C  ori   $v0, $v0, 0x422e     ; 'B.'
+001A0E70  lui   $at, 0x8000
+001A0E74  sw    $v0, 0x30($at)
 ```
 
 `"WHB."` at `0x80000030` - Wayne Hughes Beckett again (`REVERSING.md` §5.5), and
-low kernel RAM is where cheat devices live. That narrows the search but does not
-end it, because the blob is data as far as the firmware's own address space is
-concerned.
+low kernel RAM is where cheat devices live. (`0x1A0788` reads it back: it
+compares the word with `WHB.` and, when asked to, overwrites it with `GAME`.)
+That narrows the search but does not end it, because the blob is data as far as
+the firmware's own address space is concerned.
 
 What ended it was searching for a *behaviour already known from the format*
 rather than for an address. `FINDINGS.md` §2 records that a Megacode payload is
-installed at `0x80000040`; whatever does that has to build that constant:
+installed at the breakpoint vector `0x80000040`; whatever does that has to build
+that address, and it builds its uncached alias:
 
 ```python
 lui  $a1, 0xa000 ; addiu $a1, $a1, 0x40     # 3C05A000 24A50040
 ```
 
-One hit per image, nine for nine. In three of them it is inside the unpacked
-firmware and in six it is in the raw ROM, which is the part that would have gone
-unnoticed: a scan of the unpacked images alone finds the engine in
+One aligned hit per image, nine for nine. In three of them it is inside the
+unpacked firmware and in six it is in the raw ROM, which is the part that would
+have gone unnoticed: a scan of the unpacked images alone finds the engine in
 `xteng`/`xtger`/the USA ROM and concludes the Pro and FX firmwares do not have
 one.
 
@@ -1571,11 +1761,11 @@ is no per-frame timer and no "apply once" pass: codes are re-applied on every
 interrupt, which is why a 16-bit store and a permanent unlock are the same code
 type.
 
-## 13. The types with no runtime handler
+## 13. Staging: the types with no runtime handler
 
-The engine answers eleven of sixteen. For the rest, ask the staging code - and
-ask it by pattern rather than by following calls, because wherever this firmware
-was seen to isolate a type nibble it did so with one instruction:
+The engine answers eleven of sixteen. For the rest, ask the staging code. Asking
+it by pattern rather than by following calls gets most of the way, because where
+this firmware isolates a type nibble it mostly does so with one instruction:
 
 ```sh
 # every occurrence in the image, and the constants near it
@@ -1594,43 +1784,95 @@ xtjpro.dec                   15 andi sites,  9 read, types 5 6 7 9 A D F
 ... and the rest
 ```
 
-Blocks (5, 6, A), the anchors (D, F), the conditionals (7, 9). No site the scan
-reads looks at types 1, 2 or C. Enumerating the instruction took one pass and
-settled a question that following call graphs had not - but be clear about what
-it settles. It is an enumeration of one idiom, so a classifier built from a
-shift, a different mask, a range test or a table would not appear in it. And
-within that idiom it reads only two thirds of the occurrences; the rest are
-listed as `(constant not resolved)` rather than dropped, so the gap is visible.
-"Nothing looks at 1, 2 or C" is therefore the reading of the evidence, not a
-result the scan proves. What makes it a good reading is that the union does not
-move: at four window sizes, resolving 67 to 81 of the 124 occurrences across the
-corpus, it is `5 6 7 9 A D F` every time. `typecx.py` widens it from one idiom to
-three - this one, `srl rX, rY, 0x1C` (which is how the engine itself does it) and
-`andi rX, rY, 0xF000` - over ten images. The union grows to `3 4 5 6 7 8 9 A B D
-E F`, because the three images that keep the engine inside the packed firmware
-now contribute the dispatch chain too. It still contains no 2 and no C.
+Blocks (5, 6, A), the anchors (D, F), the conditionals (7, 9). The union does not
+move at four window sizes, resolving 67 to 81 of the 124 occurrences across the
+corpus. `typecx.py` widens it from one idiom to three - this one, `srl rX, rY,
+0x1C` (which is how the engine itself does it) and `andi rX, rY, 0xF000` - over
+ten images, and the union grows to `3 4 5 6 7 8 9 A B D E F`, because the images
+that keep the engine inside the packed firmware contribute the dispatch chain
+too. None of the three idioms finds a 1, a 2 or a C.
 
-What the staging passes do with them - **read, not executed**: the emulator is
-fed staged output, so everything in this section is a disassembly conclusion in a
-document that otherwise tries not to have any.
+That was read, for a long time, as "nothing looks at 1, 2 or C". It is wrong about
+C, and the reason is a classifier none of the idioms can see.
+
+### 13.1 The pass-4 normaliser
+
+Pass 4 decrypts each line it emits with key −1 and then, before turning it into a
+list entry, hands the six bytes to one function - in `xteng.dec` the loop
+decrypts at `0x1AA9EC` and calls `0x1A835C` at `0x1AA9F8`, its only caller. That
+function compares *whole first bytes* - `lbu`, a constant, `beq`/`bne` - and
+rewrites:
+
+```c
+if (c[0] == 0x00 && (c[3] & 3)) c[0] = 0x80;     /* misaligned word write: halfword */
+if (c[0] == 0x80) {
+    if (c[3] & 1) c[0] = 0x30;                   /* odd halfword write: byte */
+} else if (c[0] == 0xD0 || c[0] == 0x70 || c[0] == 0xC0) {
+    c[0] = 0x70; c[3] &= 0xFE;                   /* D0, C0 become 70; even address */
+} else if (c[0] == 0xB0) {
+    c[3] &= 0xFE;                                /* slide: even address step */
+}
+if (c[0] == 0x30 && (c[3] & 1)) {
+    c[0] = 0xE0; c[3] &= 0xFE;                   /* odd byte write: E, one down */
+}
+```
+
+It is in all ten images, with one caller each - `0x1A7E40` (2.004), `0x1A8010`
+(2.005), `0x1A835C` (2.008), `0x1A8360` (2.0081), `0x1A9338` (Pro 2.14),
+`0x1A9978` (Pro 2.20), `0x80031C08` (FX 3.20), `0x80032398` (4.50) and
+`0x80032024` (4.52, both dumps) - and `engine.py` finds it by the bytes it
+rewrites to and from and asserts exactly that. The V2 and Pro copies are the same
+instructions; FX schedules them differently. `engineemu.py` runs it in all ten
+over 29 codes, and all ten give the same answers (§5).
+
+Every rule makes an address even. The engine reads every entry's address as a
+halfword before it knows the type (§3, §5), and on an R3000 a halfword read at an
+odd address is an address-error exception - a MIPS I rule, not something observed
+here, but it is the one reading under which every line of the function has a
+purpose. A byte write at an odd address cannot be made even, so it is re-expressed:
+type E writes one byte *above* its address, so `E0` at `addr - 1` is the same
+store. That is what type E is for, and why no database stores one.
+
+Because it matches the whole byte, the normaliser leaves alone any line whose flag
+nibble survived decryption - `CD`, `C6`, `C8`, `D8`, `38`, `88` - which is what
+keeps type C useful as filler and what lets §7's default-off rows through
+unrepaired.
+
+### 13.2 What staging does with each of them - executed
+
+`engineemu.py` runs the four passes out of each image, from the call of pass 1 to
+the end of the pass-4 loop, over hand-built selections (§5 has the output): the
+menu firmware's own code, with only the BIOS strncpy and the copyright checker
+stubbed. What is not run is the menu that builds a selection - the descriptor and
+pointer arrays are constructed by hand.
 
 * **type A** is rewritten as a type 5 with the header's value field as the first
   two payload bytes, and swallows every following line of the cheat entry as six
   raw bytes each. No length field, no payload cipher - the hand-entry form of a
-  Supercode.
-* **type D** is rewritten as a type F and *hoisted to the front of the list*, by
-  shifting every existing entry two words along. Only if it is the only D in the
-  whole enabled selection; a second one makes the pass give up, and both then
-  reach the engine as an unhandled type. A type F line is hoisted too, and wins
-  over a D.
+  Supercode. (Its extent is read, not yet executed.)
+* **type C**, stored `C0`, is rewritten as a type 7 equality guard with an even
+  address. With a flag nibble it is left alone, and the engine ignores it.
+* **type D**, stored exactly `D0`, is rewritten as a type F and *hoisted to the
+  front of the list*, by shifting every existing entry two words along - if it is
+  the only D0 in the whole enabled selection and no type F is enabled. A type F
+  line is hoisted too, found by its nibble, and wins over a D. Every D0 that is
+  not hoisted becomes a type 7 guard. Only a D with a flag nibble reaches the
+  engine as a D.
+* **type E** is never consumed - it is produced, for every odd-address byte write.
+
+The hoist makes the address even on the *stored* bytes, before decryption. For a
+line in the clear that is the address; for an encrypted one it is ciphertext, and
+the USA database ships three key-4 anchors that the hoist turns into anchors that
+cannot match (type D, §4; executed).
 
 That hoisting is what makes F an anchor rather than an ordinary conditional: it
 is evaluated first and, on a mismatch, abandons every enabled cheat at once.
 
-So "five types never reach the console" would be wrong, and the split matters:
-types 1, 2 and C reach the engine and are ignored; A and D reach it and are
-ignored too whenever the staging rules do not promote them - two type D lines in
-one selection is the documented way to arrange that.
+So "five types never reach the console" would be wrong, and the split matters.
+Types 1 and 2 reach the engine and are ignored. A never reaches it. C and D reach
+it as something else - a 7, or an F - unless their flag nibble is set, and then
+they reach it as themselves and are ignored. E, which no database stores,
+reaches it more often than any type but 8 and 3.
 
 ## 14. The databases as a cross-check
 
@@ -1663,13 +1905,15 @@ given:
   the address is the address of the type 8 line below it, four times out of four.
   And six are Japanese joker codes whose values decode exactly as pad masks:
   `0xB7FF` is `~(R1 | cross)`, `0xBDFF` is `~(R2 | cross)`, `0xB7EF` is
-  `~(R1 | cross | up)`, and the cheat names say R1+×, R2+× and up+R1+×. No
-  firmware in the corpus implements it, so those guards are skipped and the
-  writes below them are unconditional.
-* **types 2, A and E appear nowhere in the recovered corpus.** E works; A works,
-  through staging. Nothing in nine firmwares or five databases says what 2 was
-  for - nor in the tenth firmware and sixth database `typecx.py` adds, which is
-  2,244 more code lines and still not one.
+  `~(R1 | cross | up)`, and the cheat names say R1+×, R2+× and up+R1+×. The
+  filler and the disabled codes carry a flag nibble and are inert; the jokers are
+  stored `C0`, so staging makes each a type 7 guard and they work as written
+  (§13).
+* **types 2, A and E are stored nowhere in the recovered corpus.** E works, and
+  staging produces it 1,156 times from these databases; A works, through staging.
+  Nothing in nine firmwares or five databases says what 2 was for - nor in the
+  tenth firmware and sixth database `typecx.py` adds, which is 2,244 more code
+  lines and still not one.
 
 ## 15. Stop reading it, run it
 
@@ -1680,10 +1924,13 @@ engine is a much smaller target: one entry point, no BIOS calls, 0x24C bytes.
 list, enters it the way the hook does (`$t1` = 0x17) and records every access
 outside four quiet regions.
 
-The scope is the runtime only. The four staging passes are not executed; the
-emulator is handed word pairs and control blocks that are already staged, so
-everything in §13 stays a reading. That line is worth keeping sharp, because the
-temptation once an emulator works is to describe the whole document as executed.
+The 26 cases are the runtime only: the emulator is handed word pairs and control
+blocks that are already staged. Staging is a second harness in the same script
+(`Stager`, §13), which runs the passes out of the menu firmware the same way and
+stops at the end of the pass-4 loop. What neither runs is the menu that builds a
+selection, so the descriptor and pointer arrays staging reads are built by hand.
+That line is worth keeping sharp, because the temptation once an emulator works
+is to describe the whole document as executed.
 
 Five things had to be got right, and four of them were wrong first:
 
@@ -1713,15 +1960,17 @@ Five things had to be got right, and four of them were wrong first:
 Two entries of the cartridge's own vector table are stubbed, and the source says
 which and why: the engine calls `+0xB0` once per pass and FX calls `+0x100` on
 the way out. Neither is handed the patch list or a code; on the V2 builds both
-run to completion unstubbed and touch nothing outside the cartridge; on FX the
-first polls a port this map does not model and never returns. The type 4 delay
-helper is *not* stubbed - it is the observable for type 4.
+run to completion unstubbed and touch nothing outside the cartridge but the poke
+table's flag byte at RAM `0x703` (§9); on FX the first polls a port this map does
+not model and never returns. The type 4 delay helper is *not* stubbed - it is the
+observable for type 4.
 
 The result is 9 firmwares x 26 cases, and it reproduces every runtime semantic in
 §4 while adding four things reading did not give:
 
 * **type D is inert at run time** - seed the anchor with a value it does not
-  match and the code below it still fires;
+  match and the code below it still fires. On a cartridge only a D with its flag
+  nibble set gets that far (§13);
 * **nearly every code dereferences its own address twice before its type is
   known**, because the type F and type 7 handlers put their `lhu` in a `bne`
   delay slot - and type 9 reads it three times, while F and B read it once. Even
@@ -1732,7 +1981,9 @@ The result is 9 firmwares x 26 cases, and it reproduces every runtime semantic i
   declares a payload of zero bytes, which the shipped German database contains
   twice;
 * **two cases in twenty-six differ across the nine firmwares**, and both are the
-  same missing branch: type 4.
+  same missing branch: type 4. Apart from the cases, the FX engines clear DCIC on
+  entry, on every B() call, which the harness checks on its own rather than
+  letting it into every trace (§6).
 
 That last line is worth the whole exercise. The static diff of §6 said the same
 thing, but it said it about *instructions*; this says it about behaviour, and the
@@ -1752,24 +2003,23 @@ two agreeing is what makes either believable.
   dead - type 2 among them. Only FCD documentation, the X-Link PRO / v1.10 that
   `pc/RelNotes.txt` promises, or a database nobody here has would turn "unused"
   into a fact.
-* **Type C on the Japanese Pro.** Two of the three explanations are now ruled
-  out and the third is unchanged (`typecx.py`, and type C above). *Not FCD's PC
-  tooling*: the Advanced Code Generator's Joker in `XLink.exe` emits a type 7 or
-  type 9 guard over a type 3 write and never a type C, and the masks it
-  documents are byte-swapped where the Japanese ones are not. *Not the
-  X-Terminator*: that is this cartridge, under its Japanese name (below). What is
-  left is a hand that was not FCD's, working to a specification in which C is an
-  equality guard - and that specification was the general belief of the period.
-  Every contemporary write-up of the Xplorer format (web sources: the "Advanced
-  Xplorer Codes" FAQ, May 2000; Hackman's in-depth FAQ, June 2000; GS Central's
-  compatibility table) documents type C as an if-then conditional carried over
-  "for Action Replay / Datel compatibility" - and the GameHacking wiki, testing
-  it, reports "in no cases did those types work", which is exactly what the
-  firmware says: no handler, so the guard is skipped. `x-killer.exe` (1999) has
-  the same "supported - Datel code, obsolete". So a code author in 1998-99 had
-  every reason to write a type C button guard and no way to discover on this
-  hardware that it does nothing. Whose code list it came from, and whether any
-  build ever ran type C, the corpus still cannot say.
+* **Who wrote the Japanese type C jokers.** Not what they do: they work, as
+  type 7 guards, on every cartridge in the corpus (§13). Every contemporary
+  write-up of the Xplorer format (web sources: the "Advanced Xplorer Codes" FAQ,
+  May 2000; Hackman's in-depth FAQ, June 2000; GS Central's compatibility table)
+  documents type C as an if-then conditional carried over "for Action Replay /
+  Datel compatibility", and `x-killer.exe` (1999) has "supported - Datel code,
+  obsolete" - all of them right, for a C stored with a zero flag nibble. The
+  GameHacking wiki, testing it, reports "in no cases did those types work"; the
+  firmware says that is true only of a C with its flag nibble set, and which of
+  the two the wiki tried is not recorded. What is still open is whose
+  convention the jokers follow. *Not FCD's PC tooling*: the Advanced Code
+  Generator's Joker in `XLink.exe` emits a type 7 or type 9 guard over a type 3
+  write and never a type C, and the masks it documents are byte-swapped where the
+  Japanese ones are not. *Not the X-Terminator*: that is this cartridge, under
+  its Japanese name (below). That leaves another hand working to the Datel-style
+  type list, or games that keep their pad state the other way round from the
+  ones FCD's table was written for. The corpus cannot tell the two apart.
 * **The X-Terminator is not another device.** `pc/RelNotes.txt` names it beside
   the Xplorer and reads like a second product, and `XLink.exe` really does carry
   a second saved-codes banner for it. It is the Japanese name of this cartridge:
@@ -1787,17 +2037,24 @@ two agreeing is what makes either believable.
   and a 16-bit value with no type nibble at all.
 * **What the console does with a bad address.** §7 is executed, but against a
   memory map, not a PlayStation. That the engine dereferences `0x0802A798` is
-  now observed; what an R3000 does about it is not.
-* **The row-count bug.** Staging pass 1 computes a Supercode's row count with
-  `or` where pass 2 uses `add` (`REVERSING.md` §7 already noted it). Present in
-  all nine; it needs a payload whose low size byte is at least `0xFB` with an odd
-  high nibble, no recovered database has one, and it has not been reproduced.
+  now observed; what an R3000 does about it is not. Nor is what it does about an
+  odd one - the MIPS I answer is an address-error exception, which is the reason
+  §13 gives for the normaliser, but no console has been watched taking one.
+* **The row-count bug in the wild.** Staging pass 1 computes a Supercode's row
+  count with `or` where pass 2 uses `add` (`REVERSING.md` §7 already noted it).
+  It is reproduced now, executed in all ten: a 507-byte Supercode is fine, and the
+  same one with a 6 at the start of its 43rd payload row makes pass 1 stage a
+  Megacode out of the payload, after which pass 2 finds rows missing - so the V2
+  builds and Pro 2.14 hang, and Pro 2.20 and FX stage a bogus Megacode (§7). No
+  recovered database has a Supercode long enough.
 * **What is in front of the record chains.** `db2.find_db()` returns the chain it
   can parse, and in `xteng.dec` printable game data starts about 0x3000 bytes
   ahead of it. Every count in §8 and §14 is over what was recovered.
-* **The staging passes have not been executed.** §13 is the one part of this
-  document that is still only a reading. The runtime is fed their output by hand,
-  so a mistake in reading them would not show up anywhere in §5.
+* **The menu that builds a selection.** The staging passes are executed (§13),
+  but over descriptor and pointer arrays built by hand. What the menu really puts
+  there - in particular what a cheat-name line's pointer points at, which is what
+  the malformed MGS record takes for its descriptor - is a reading. Type A's
+  extent, which depends on those descriptors, is not executed either.
 
 ## 17. Transferable checklist
 
@@ -1819,6 +2076,10 @@ two agreeing is what makes either believable.
   *every* occurrence, though, and report the ones you cannot read as unresolved:
   a scan that quietly drops them turns "13 occurrences, 9 read" into "7 sites",
   which sounds like a complete answer and is not one.
+* An idiom scan finds the idiom, not the question. The function that decides what
+  type C means compares whole bytes and has no `andi` in it, and three widening
+  scans walked past it. Following the data instead - from the decrypt call to the
+  store of the list entry, one call in between - finds it in one step.
 * Diff behaviour across builds mechanically, not by reading. Normalising over
   branch targets turns "are these the same routine" into a string comparison, and
   it is what made the missing type 4 obvious rather than something to notice.
@@ -1826,8 +2087,8 @@ two agreeing is what makes either believable.
   *because* it is unimplemented.
 * When two encodings of the same data disagree about a bit - the encrypted and
   plaintext forms of the same cheat - follow the bit, not the value.
-* Count one population per sentence. "133 rows have the bit", "121 of them keep
-  it through decryption" and "120 of those use a wrong address" are three
+* Count one population per sentence. "133 rows have the bit", "121 of them are
+  stored without a key" and "120 of those use a wrong address" are three
   different numbers about the same defect, and using them interchangeably makes
   every one of them unciteable.
 * The obvious release-history story is worth one more query. "The first database

@@ -33,20 +33,25 @@ something else - it is *something else*, with a one-pointer index inside it:
 the support module's vector table holds the chain's address at +0x38, and that
 pointer equals the offset `db2.find_db()` derives from framing alone in all
 five images.  Two independent locators, same answer, so nothing is missing in
-front.  Two harder checks agree: none of the 10,054 distinct game and cheat
+front.  Two harder checks agree: none of the 8,307 distinct game and cheat
 names of the five recovered chains occurs anywhere below the chain start, and
-no second framed chain parses there either.
+no second framed chain parses there either.  (Counted chain by chain, as the
+search runs, that is 10,054: a name shared by two databases is searched in
+each.  Only names long enough to be evidence count - see names_below().)
 
 The four FX images have no in-ROM chain, and the same +0x38 slot says where
 their database is instead: at the next 0x100 boundary after the firmware blob,
 behind an 8-byte header of two little-endian words, `(packed, unpacked)`.  The
-packed word runs to the last live byte in all four dumps - so the shipped FX
-database *is* in these files, entire, contrary to FINDINGS.md 6.3, which ruled
-on the flash region at the top of the window and read the first 0x8F bytes of
-this one (leftover resource bytes; the ones in english-452.dec read as x86) as the whole
-tail.  What compresses it is not decoded here: it is not COMP01, not COMP01
-under the FX descrambler, and not a byte-aligned or bit-flagged LZSS in any of
-the 336 shapes tried.  The container is asserted below; the contents are not.
+packed stream runs to the end of the written flash in all four dumps - flush
+with the last live byte in three, followed by zero padding to the next 0x100
+boundary in `v452d.rom` - so the shipped FX database *is* in these files,
+entire.  FINDINGS.md 6.3 first ruled the opposite, on the flash region at the
+top of the window, and read the first 0x8F bytes of this one (leftover resource
+bytes; the ones in english-452.dec read as x86) as the whole tail.  The stream
+is 14-bit LZW, not COMP01 in any form: `fxdb.py` decodes it and runs the
+firmware's own decompressor against the result.  Here the container is
+asserted, and its contents only as far as the decoded length and the record
+chain's `FF FF FF FF` terminator.
 
     uv run python prechain.py
 """
@@ -57,6 +62,7 @@ import sys
 
 import comp01
 import db2
+import fxdb
 import fxunp
 
 # The support module's branch vector table sits at base + 0x80 and its ninth
@@ -151,7 +157,7 @@ def names_below(raw, start):
             b = text.encode('latin-1')
             if len(b) >= floor:
                 names.add(b)
-    return len(names), sorted(n for n in names if n in head)
+    return names, sorted(n for n in names if n in head)
 
 
 def chains_below(raw, start):
@@ -236,9 +242,11 @@ EXPECT_FX = {
     'v452d.rom': (0x040300, 0x909D, 0xCC06),
 }
 
-# Names searched for below the chain, summed over the five V2/Pro images, and
-# how many were found there.  The second number is the finding.
+# Names searched for below the chain - summed over the five V2/Pro images, and
+# as one set across them - and how many were found there.  The last is the
+# finding.
 EXPECT_NAMES = 10054
+EXPECT_NAMES_UNION = 8307
 EXPECT_NAMES_BELOW = 0
 EXPECT_CHAINS_BELOW = 0
 
@@ -251,6 +259,7 @@ def main():
                         'below is for that corpus' % (len(roms), EXPECT_ROMS))
 
     names_total = names_found = chains_found = 0
+    union = set()
     for path in roms:
         name = path.split('/')[-1]
         raw = open(path, 'rb').read()
@@ -301,13 +310,14 @@ def main():
                 problems.append('%s: gap inventory %s, expected %s'
                                 % (name, gap, want_gap))
 
-            total, below = names_below(raw, start)
+            names, below = names_below(raw, start)
             found = chains_below(raw, start)
-            names_total += total
+            names_total += len(names)
+            union |= names
             names_found += len(below)
             chains_found += len(found)
             print('     %d distinct chain names, %d of them below the chain %s'
-                  % (total, len(below), below[:3]))
+                  % (len(names), len(below), below[:3]))
             print('     %d further framed chains below it %s'
                   % (len(found), ['0x%06X' % o for o in found[:3]]))
         else:
@@ -331,13 +341,22 @@ def main():
                 problems.append('%s: the container does not run to the end of '
                                 'the written flash (0x%06X vs 0x%06X)'
                                 % (name, end, live))
+            chain = fxdb.lzw_unpack(raw[off + 8:end])
+            print('        LZW decodes to 0x%X bytes ending %s'
+                  % (len(chain), chain[-4:].hex()))
+            if len(chain) != unpacked or chain[-4:] != b'\xff' * 4:
+                problems.append('%s: the container decodes to 0x%X bytes ending '
+                                '%s, not 0x%X ending in a chain terminator'
+                                % (name, len(chain), chain[-4:].hex(), unpacked))
         print()
 
-    print('across the five V2/Pro chains: %d distinct names, %d occur below a '
-          'chain, %d second chains' % (names_total, names_found, chains_found))
-    if names_total != EXPECT_NAMES:
-        problems.append('%d distinct names, expected %d'
-                        % (names_total, EXPECT_NAMES))
+    print('across the five V2/Pro chains: %d distinct names (%d counted chain '
+          'by chain), %d occur below a chain, %d second chains'
+          % (len(union), names_total, names_found, chains_found))
+    if (len(union), names_total) != (EXPECT_NAMES_UNION, EXPECT_NAMES):
+        problems.append('%d distinct names, %d chain by chain, expected %d / %d'
+                        % (len(union), names_total, EXPECT_NAMES_UNION,
+                           EXPECT_NAMES))
     if names_found != EXPECT_NAMES_BELOW:
         problems.append('%d name(s) below a chain, expected %d - there would '
                         'be cheat data in front after all'

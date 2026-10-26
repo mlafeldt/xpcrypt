@@ -5,9 +5,10 @@ while reading the crypto out of the cartridge firmware afterwards. `REVERSING.md
 the companion: how the firmware was cracked open, step by step.
 
 xpcrypt has a second, unrelated cipher in it: the whole-image transform between a
-`.fcd` file and a plaintext ROM, which `-r` once applied with two brute-forced 512-byte
-seed tables (replaced by the closed form in `82f50b6`). That one is **not** in the firmware and never was - it belongs to the
-PC-side tools, where it is twenty-one instructions and no tables, in four binaries
+`.fcd` file and a plaintext ROM, which `-r` once applied with two brute-forced
+512-byte seed tables (replaced by the closed form in `82f50b6`). That one is **not**
+in the firmware and never was - it belongs to the PC-side tools, where it is a
+loop of about twenty instructions (22 in the DOS tool) and no tables, in four binaries
 and both directions, all eight of them executed under an emulator to prove it.
 `FCD.md` is that hunt, and it stands apart from everything below.
 
@@ -33,15 +34,14 @@ of the repo — `research/.gitignore` names `roms/` for that reason. The line wa
 at first, and a `git add -A` promptly staged 4 MB of firmware dumps.
 
 > ⚠ **If you ever write a modified image back to a real cartridge, read 5.3b first.**
-> Eight of the nine firmwares check the cheat database against a hidden copyright
+> Nine of the ten firmwares check the cheat database against a hidden copyright
 > string while decrypting an ordinary code, and overwrite 96 KB of their own flash if
 > it does not match. Nothing in this repo can trigger it — xpcrypt only ever touches
-> files — but a rebuilt ROM with the header edited will.
->
-> **Ninth pass (`AUDIT.md`):** with the tenth image it is nine of ten. And one of them
-> needs no edit: Pro 2.14's check string (`1997/8`) predates its own header
-> (`1997-9`), so on a stock 2.14 cart the first key-7 or Special32 code a user
-> activates programs the 96 KB. No row of its shipped database takes either route.
+> files — but a rebuilt ROM with the header edited will. And one needs no edit at
+> all: Pro 2.14's check string (`1997/8`) predates its own header (`1997-9`), so on
+> a stock 2.14 cart the first key-7 or Special32 code a user activates programs the
+> 96 KB. No row of its shipped database takes either route, which is presumably why
+> it went out like that.
 
 The feature is **implemented, committed and validated against real cartridge ROMs**.
 This document captures what the shipped source does not: the format knowledge, the
@@ -53,11 +53,11 @@ evidence behind each decision, the test rig, and what is still unproven.
 
 The feature landed in `17e31fc..HEAD`.
 Read `git log -p 17e31fc..HEAD` for the code; the format itself is documented in
-`crypto.c` (block comment above `known_payload_key()`) and in `README` (sections
+`xp_crypto.c` (block comment above `known_payload_key()`) and in `README` (sections
 "Supercode/Megacode" and "Inline data blocks"). Do not re-derive from this doc — the
 source is authoritative.
 
-Public API added in `crypto.h`: `struct xp_block`, `xp_parse_block()`,
+Public API added in `xp_crypto.h`: `struct xp_block`, `xp_parse_block()`,
 `xp_in_payload()`, `xp_decrypt_block_line()`, `xp_encrypt_block_line()`. The block
 state machine is shared by `crypt_codes()` and the ROM extractor through
 `crypt_code()` in `xpcrypt.c`.
@@ -101,7 +101,7 @@ the byte count up to whole words at runtime (irrelevant for crypto — keep whol
 
 * `0` — payload stored in the clear. **This is the common case in real ROMs.**
 * `6`, `7` — the only two ciphers the cartridge implements (see
-  `decrypt_payload()`/`encrypt_payload()` in `crypto.c`).
+  `decrypt_payload()`/`encrypt_payload()` in `xp_crypto.c`).
 * anything else — **does not exist**: the firmware zeroes bytes 1 to 5 of the row and
   never writes byte 0 at all, so such a block is dead on the cart whatever the caller
   had in that byte (5.2). xpcrypt preserves the rows and warns instead, which is the
@@ -205,7 +205,7 @@ uv run --with capstone python fxtest.py   # all nine firmwares against each othe
 | `romcrypt.py` | hand transcription of the decrypt routine; the model xpcrypt is checked against |
 | `oracle_test.py` | xpcrypt vs `romcrypt.py`, generated codes plus every real database, one cheat at a time |
 | `roundtrip.py` | `xpcrypt -e K \| xpcrypt -d` over every recovered database code, for all four keys |
-| `fwimage.py` | unpacks the firmware out of any of the nine ROMs (V2 or FX) |
+| `fwimage.py` | unpacks the firmware out of any of the ten ROMs (V2 or FX) |
 | `fxunp.py` | the FX descrambler that sits in front of COMP01 (5.4) |
 | `comp01.py` | the COMP01 container both generations use |
 | `fwemu.py` | MIPS I interpreter — runs the decrypt routine, and the code engine, straight out of an image |
@@ -215,18 +215,26 @@ uv run --with capstone python fxtest.py   # all nine firmwares against each othe
 | `escrank.py` | how rare COMP01's four escape bytes are in the stream that chose them (5.1b) |
 | `defaultoff.py` | the four default-off counts, with the matching rule behind the fourth (7) |
 | `fxprot.py` | the self-bricking copyright check hidden in the decrypt routine (5.3b) |
-| `fxdb.py` | where each firmware keeps its codes — why the FX dumps have no database (6.3) |
+| `fxdb.py` | where each firmware keeps its codes: the V2 chain, or the FX LZW container, decoded and counted (4.1, 6.3) |
 | `engine.py` | finds the in-game code engine in any of the nine ROMs and dumps its type dispatch (7) |
 | `engineemu.py` | executes that engine over a synthetic patch list and records what it touches (7) |
 | `dbtypes.py` | block-aware survey of the recovered databases: which code types are actually used (7) |
 | `fcdcrypt.py` | the *image* cipher — the `.fcd` transform, as the vendor's tool implements it, checked against the xpcrypt binary and every image pair (`FCD.md`) |
 | `xlink.py` | LE and PE loaders for the PC-side tools; finds both directions of that cipher in all four of them and executes all eight routines under an emulator (`FCD.md` §5, §5a) |
-| `xcode.py` | the *code* cipher in those same four tools, found by executing all 3,920 of their functions rather than by searching: the vendor's DOS tool holds the encrypt side the cartridge never had, and it agrees with `xpcrypt -e` byte for byte (`ENCRYPT.md`) |
+| `xcode.py` | the *code* cipher in those same four tools, found by executing all 3,920 call-target candidates in them rather than by searching: the vendor's DOS tool holds the encrypt side the cartridge never had, and it agrees with `xpcrypt -e` byte for byte (`ENCRYPT.md`) |
 | `mipscan.py` / `fxdis.py` | word-aligned disassembler, constant scanner, range dumper |
 | `fwscan.py` | the same two operations over the *unpacked* firmware, so the addresses match the ones the notes quote |
 | `db2.py` / `dbscan.py` | ROM database readers (4.1) |
 | `extract_test.py` | `xpcrypt -x` against a synthetic plaintext/encrypted ROM and all five complete database chains (4.5) |
 | `audit2.py` / `boundary.py` / `xcheck.py` | the row-count and round-trip oracles (4.2, 4.3) — `audit.py` is its superseded first version and says so |
+| `fuzz_test.py` | malformed ROMs through `-x` under ASan/UBSan, generated from `extract_test.py`'s fixture |
+| `prechain.py` | what lies between the packed firmware and the record chains: pad, erased flash, the support module, and the FX database container |
+| `rom2005.py` | the tenth image, release 2.005 from `pc/ROMS/Xteng.fcd`, placed against the corpus (`TENTH.md`) |
+| `payloads.py` | the shipped Supercode/Megacode/type-A payloads disassembled, and the ten that ship corrupt |
+| `selfdestruct.py` | the copyright check of 5.3b executed, under a model of the flash part |
+| `plugin.py` | the `FCDEXE1138` memory-card upgrade loader, per image (`PLUGIN.md`) |
+| `comms.py` | the X-Link parallel-port protocol, PC and cartridge ends |
+| `typecx.py` | what types 2 and C are, across the databases, the firmware and `XLink.exe` (`ENGINE.md` §16) |
 
 ### 4.1 ROM database layout
 
@@ -238,7 +246,8 @@ begins after an erased run of `FF` bytes.
 game and cheat names (`Infinite`, `Unlimited`, ` Lives`, `Player`, ` Energy`,
 ` Time`, `Money`). Requiring printable names rejected three databases. The
 first repair allowed them in cheat names only, so `db2.py` still resynchronized
-at a later printable game in the UK and USA images. Requiring the erased-flash
+partway through a name - inside `"Duke Nukem:\x06 To Kill"`, at `0x27F69` in the UK
+image and `0x2C8EC` in the USA one - and parsed a valid suffix from there. Requiring the erased-flash
 boundary and accepting the seven bytes in either name recovers the real start.
 High bytes are retained for the Japanese database's Shift-JIS names; `0x7F` and
 `0xFF` are not accepted as name bytes.
@@ -250,11 +259,28 @@ High bytes are retained for the Japanese database's Shift-JIS names; `0x7F` and
 | `Xploder V2 (USA) r2.004…rom` | `0x25000` | 250 / 4048 / 4905 |
 | `xtger.dec` (Xplorer German 2.0081) | `0x25000` | 240 / 1787 / 2476 |
 | `xtjpro.dec` (Xplorer Pro Japanese 2.14) | `0x2b000` | 61 / 1619 / 1826 |
-| `english.dec` / `v452d.rom` (FX V3.20 / V4.52) | not in the dump | codes live in flash at the top of the 512 KB window; both images are truncated below it — see 6.3. **Wrong (ninth pass): LZW-packed at `*(ROM+0x7C)+0xB8`; see 6.3** |
+| `pc/ROMS/Xteng.fcd` (Xplorer V2.005 UK, `TENTH.md`) | `0x25000` | 233 / 1668 / 2365 |
+| `english.dec` (FX V3.20) | `0x44400`, LZW-packed (6.3) | 264 / 1922 / 2825 |
+| `german-450.dec` (FX V4.50) | `0x41200`, LZW-packed | 264 / 2071 / 2957 |
+| `english-452.dec` / `v452d.rom` (FX V4.52) | `0x4FA00` / `0x40300`, LZW-packed | 263 / 1921 / 2823 |
+
+The V2 chains are found by their framing alone, but the firmware also points at
+them: `*(u32 *)(ROM + 0x7C)` is the support module, and its slot at `+0xB8` holds
+the database address in all ten images. On FX that address is a container (6.3),
+not a chain.
+
+"Games" counts distinct names. The USA chain has 252 game records, because `Bio
+Freaks` and `Casper` each appear twice, and `-x` prints all 252. 2.005 has 234
+records, one of them the empty `Moto Racer 2`. The FX chains hold 265 (3.20), 269
+(4.50) and 264 (4.52) records. Five of the German ones are deliberate zero-cheat
+legend entries (`"Abkuerzungen"`, `"ENG = Energie"`, …). A cheat may declare zero lines too, and the USA chain has 249
+such cheats.
 
 The correction adds 1,633 cheats and 2,144 code lines: 679 lines from the UK
-prefix and 1,465 from the USA prefix. Across all five images the complete chains
-hold 1,121 games, 11,718 cheats and 15,349 code lines.
+prefix and 1,465 from the USA prefix. Across the five original V2 images the
+complete chains hold 1,121 distinct games (1,123 records), 11,718 cheats and
+15,349 code lines; every count and gate below is over those five unless it says
+otherwise.
 
 ### 4.2 Row-count oracle
 
@@ -277,7 +303,7 @@ The *same cheats* appear in `xteng.dec` encrypted with payload key 6 and in
 `xtepro.dec` stored in the clear. `xcheck.py` decrypts the former and compares:
 
 ```
-16/16 blocks match WITH swap_payload()      0/16 match without it
+blocks cross-checked: 16   swapped matches: 16   unswapped matches: 0
 ```
 
 Including a 176-byte / 30-row payload. Example (Puzzle Bobble 4 / Bust-A-Move 3DX):
@@ -455,8 +481,10 @@ it, but nothing here measures how close one would land or how long it would take
 
 ### 5.2 The routine
 
-One function, `0x801ABF94` in `xteng.dec` (`0x801AD8..` in xtepro, `0x801AB9..` in the
-USA ROM - all five V2 ROMs are identical here), `decrypt(src, dst, key)` with `key = -1`
+One function, `0x001ABF94` in `xteng.dec` (`0x001AD85C` in xtepro, `0x001ABA78` in the
+USA ROM - all five V2 ROMs are identical here; V2 addresses here are the `0x001Axxxx`
+form every absolute pointer in those images uses, although the loader enters through
+`0x801A0008`), `decrypt(src, dst, key)` with `key = -1`
 for a normal code and the payload key for a Supercode/Megacode row. **No image here
 contains an encrypt routine** - a scan of all nine for the shapes of the four ciphers
 finds only the decrypt sites. The cart only ever decrypts, which is all a cart needs to
@@ -484,7 +512,8 @@ Special32 and Special33 never write `dst[0]` either. Prefill the destination wit
 and the firmware answers `AA0000000000` for an unknown payload key and `AA474547 0405`
 for `32010203 0405` - `fxtest.py` runs every case that way.)
 
-Block handling (`0x801ACCC0` list walker, `0x801AD010` stager) confirms the layout:
+Block handling (`0x001ACC74`, which is both the list walker and the Megacode stager,
+and the Supercode stager at `0x001AD010`) confirms the layout:
 type 5 rows `= (nnn + 5) / 6` with the key from `hdr[4] >> 4`; type 6 rows `= 2 +
 ceil((nnnn - 2) / 6)` with the key from `hdr[3] & 0x0F`, the descriptor reversed into the
 engine control block at `+0x782`, the payload rounded up to whole words. Both stagers
@@ -506,7 +535,7 @@ differently. Items 2-5 have since been fixed, leaving only item 1.
    the firmware copies them. All 20 are `CD`/`C6` lines used as comment rows
    (`"***** ISLAND STRIKE *****"`) plus Wipeout's `C6671C0E 505A`. xpcrypt used to
    decrypt them into garbage; it now follows the table and refuses to encrypt
-   those types. `XP_KEYED_TYPES` in `crypto.c` is *not* that table - it is
+   those types. `XP_KEYED_TYPES` in `xp_crypto.c` is *not* that table - it is
    what remains of it once the redundant parts are taken out. Of the 244
    entries, 120 are unreachable (the index masks bit 3 away, so no index with
    that bit set is ever formed), 48 select a key that `code[0] & 0x07` already
@@ -522,7 +551,7 @@ differently. Items 2-5 have since been fixed, leaving only item 1.
    rows >= 2: no basis in the firmware. Both rules are inherited from SkillerCMP.
 4. **Type 6 with payload key 6/7** (no sample exists): the firmware uses the *same*
    routine for both block types, so the byte permutation that xpcrypt applies through
-   `swap_payload()` for type 5 belongs to type 6 as well.
+   `swap_payload()` (since removed) for type 5 belongs to type 6 as well.
 5. **Payload key 7** (no sample exists): firmware subtracts `0x55`, xpcrypt subtracts
    `0xAB`, and xpcrypt additionally swaps for type 5. Both inherited from the reference,
    which marks the route "forced" - it was never observed either.
@@ -559,8 +588,9 @@ Never on the payload path of a Supercode/Megacode, never on an unencrypted code,
 never on the copy route for a type the cart does not encrypt.
 
 The string is `"(C) 1997/8 FCD"`, stored **bitwise NOTed** so `strings` never shows it.
-(Every ROM also carries a plaintext `"(C) 1998 Future Console Design Ltd."` — that is
-the banner the menu prints, not what the checker reads.)
+(The firmware also carries a plaintext banner - `"(C) 1998 Future Console Design
+Ltd."` in most V2 builds, `1998/9` in Pro 2.20, `1997-99` on FX - which is what the
+menu prints, not what the checker reads.)
 
 `flash_write(src, dst, len)` is the cart's own flash programmer — the same routine that
 saves settings elsewhere as `flash_write(buf, 0x1F022600, 0x10)`. JEDEC unlock (`0xAA`
@@ -638,7 +668,8 @@ was adopted is withdrawn.
 firmwares give the same normalized instruction sequence — the routines and their tables
 are relocated per build, so `fxcmp.py` drops absolute addresses before comparing and the
 raw operands do differ; the FX routes *are* scheduled
-differently — the shared tail is a `j` away instead of inlined, and the
+differently — the shared tail is a `j` away (V2 also jumps to it from keys 4 and 5
+and inlines it only in key 7), and the
 one call the routine makes sits at the top rather than the bottom — so a static diff
 flags four routes. It changes nothing:
 
@@ -660,7 +691,8 @@ It also decrypts the known-plaintext Bust-A-Move 3DX Supercode (`pb.enc`, once m
 what proves the FX descrambler and unpacker right end to end.
 
 Two calls are stubbed. One is `strncpy` loading a 4-byte constant table (V2 reaches BIOS
-`A(0x1A)`, FX has its own copy at `0x80012AA8`). The other is the copyright check of
+`A(0x1A)`, FX has its own copy - `0x80012AA8` in 3.20, `0x80012B28` in 4.50 and
+4.52). The other is the copyright check of
 5.3b — it takes no pointer to either buffer, the ABI preserves `$s0`/`$s1`, and the
 known-plaintext check confirms it cannot touch a decrypted code, so stubbing it is safe
 for this purpose. It is emphatically *not* inert on real hardware. Every one of the nine
@@ -726,18 +758,23 @@ with something, and initials are as good as any other four bytes.
 
 ## 6. Still unproven / open
 
-0. **The self-destruct of 5.3b is a static reading — it has never been executed.**
-   The argument registers, the dereference of `$s4` inside `flash_write`, and the
-   legitimate `flash_write(buf, 0x1F022600, 0x10)` call site all corroborate it, but no
-   cartridge has been watched destroying itself and none should be. Open beyond that:
-   why Pro 2.20 shipped without the check while every later build has it; whether the
-   damage is recoverable (an earlier note here said flash programming only clears bits,
-   so a re-flash might survive. Ninth pass: wrong for the page-write parts the firmware
-   identifies, AT29C-style and SST-style alike. Each page write erases the page first,
-   so the 96 KB are replaced, boot stub included, not merely dirtied. `selfdestruct.py`
-   already models it that way); and what `0x3E8` actually holds at that moment —
-   PSX kernel RAM is not random, so the overwrite may be more deterministic than it
-   looks. **Anyone experimenting with a real cart should assume it is one-way.**
+0. **The self-destruct of 5.3b has been executed, but only under emulation.**
+   `selfdestruct.py` runs each image's real decrypt routine with the checker live and
+   the flash modelled. The ninth pass repeated that independently, with the flash as
+   plain RAM: a mismatching header programs cart `0x0-0x17FFF` from `0x3E8` in all nine
+   live images, and Pro 2.14 does it from a stock header (the ⚠ note at the top). No
+   cartridge has been watched destroying itself and none should be.
+
+   Not recoverable by re-flashing over the damage. The flash parts the firmware
+   identifies write a page at a time, and each page write erases the page first. So the
+   96 KB are replaced, boot stub included, not merely dirtied. An earlier note here
+   assumed programming only clears bits, which holds only for the byte-programmed
+   "type 3" part that 4.50 alone also accepts.
+
+   What gets written is not all kernel RAM either. `0x3E8-0xFFFF` is; on FX,
+   `0x10000` onwards is the running firmware itself. Still open: why Pro 2.20 shipped
+   without the check while every later build has it. **Anyone experimenting with a real
+   cart should assume it is one-way.**
 1. **Payload key 7 and type 6 with payload key 6/7 still have no real-world sample.**
    The firmware now settles what the hardware *does* (5.2, 5.3) — but nothing confirms
    that any database in the wild uses them.
@@ -745,45 +782,52 @@ with something, and initials are as good as any other four bytes.
    8-15 the firmware zeroes bytes 1 to 5 of the row and writes nothing to byte 0, so
    such a block is dead on the cart. xpcrypt preserves the rows and warns, which is the
    friendlier tool behaviour.
-3. ~~**FX databases** (V3.20, V4.52) not located~~ — **settled: they are not in these
-   dumps, and it was never a crypto or container problem.** Run `fxdb.py`.
+3. ~~**FX databases** (V3.20, V4.52) not located~~ — **found: they are in the dumps,
+   LZW-packed.** Until the ninth pass (`AUDIT.md`) this item said the opposite - "not
+   in these dumps, a dumping problem" - and the misreading is recorded below because
+   the same trap is easy to fall into again. Run `fxdb.py`.
 
-   > **Overturned in the ninth pass (`AUDIT.md`).** The shipped FX database *is* in
-   > all four dumps, LZW-compressed. The pointer is at `*(u32 *)(ROM + 0x7C) + 0xB8`
-   > (`0x9F044400` in `english.dec`): an 8-byte header (packed, unpacked size), then
-   > 14-bit MSB-first LZW, first code 256, end code `0x3FFF`. That stream unpacks to
-   > the ordinary record chain of 4.1. Decoded independently twice, and once by
-   > running the firmware's own decompressor: 3.20 holds 265 records / 1922 cheats /
-   > 2825 lines, 4.52 holds 264 / 1921 / 2823 (both 4.52 dumps are identical), and
-   > 4.50 holds 269 (5 empty) / 2071 / 2957. The `0x1F07FFF8` region below is the
-   > free flash above that database, reached through a bank switch, not where the
-   > shipped codes live. The text below is kept as the record of the misreading.
+   The support module's database slot, `*(u32 *)(ROM + 0x7C) + 0xB8`, names the chain
+   directly on V2 (`0x1F025000`, `0x1F02B000`). On FX it names a container:
+   `english.dec` `0x9F044400`, `german-450.dec` `0x9F041200`, `english-452.dec`
+   `0x9F04FA00`, `v452d.rom` `0x9F040300`. The container is an 8-byte little-endian
+   header - packed size, unpacked size - followed by an LZW stream:
+   * fixed 14-bit codes, MSB first;
+   * first free code 256;
+   * no clear code;
+   * end code `0x3FFF`.
 
-   The FX firmware keeps codes in a flash region that ends at `0x1F080000`, the top of
-   the PSX expansion window — 512 KB — with an 8-byte descriptor at `0x1F07FFF8` (a
-   16-bit field at +6). `0x8003BEEC` in `v452d.rom` stores both pointers into globals
-   and sizes the region as `0x80000 - (firmware_end + 0x100 + n)`; `0x8003C7CC` writes
-   the 8-byte descriptor and `0x8003C7F8` reads it back. **All four FX firmwares name
-   `0x1F07FFF8` in exactly this way and all five V2 firmwares reference it zero times** —
-   the V2 database is a plain in-ROM region instead, which is why `db2.py` finds it.
-   The split is perfectly clean across nine images and three languages.
+   The decompressor (`0x80025E80` in `english.dec`) allocates tables of 4 x 18041,
+   18041 and 4000 bytes, which are the sizes in Mark Nelson's 1989 14-bit LZW. The save
+   path (`0x80030C38`) appends `FF FF FF FF` before compressing, so what comes out is
+   the ordinary record chain of 4.1, codes and all, with the counts in the 4.1 table.
+   Executed: the firmware's own decompressor, run under an emulator, and two
+   independent decoders agree byte for byte and stop at exactly the declared size. The
+   two 4.52 dumps are different builds but carry the same database.
 
-   None of the four FX dumps here reaches that region — `english.dec` `0x4D4CF`,
-   `german-450.dec` `0x4AB45`, `english-452.dec` `0x58AA5`, `v452d.rom` `0x60000`, all
-   short of `0x80000` — and what `v452d.rom` *does* cover past `0x493A3` is erased `0xFF`.
-   So this is a **dumping** problem, not something more reverse engineering of these files
-   can fix. A full 512 KB FX dump would settle it, and nothing here rules out one existing
-   privately; the claim is about the audited corpus and the downloads we could find. Worth
-   knowing: the Wayback CDX index of the vendor's own download directory currently returns
-   six `.fcd` captures in all, so more FX images may simply be lost.
+   How it was misread. The FX firmware also keeps an 8-byte descriptor at `0x1F07FFF8`
+   (a 16-bit field at +6). `0x8003BEEC` in `v452d.rom` sizes a region as
+   `0x80000 - (p + 0x100 + n)`; `0x8003C7CC` writes the descriptor and `0x8003C7F8`
+   reads it back. All four FX firmwares name `0x1F07FFF8` that way and no V2 firmware
+   does. That was taken to mean "the codes live at the top of the 512 KB flash, above
+   what these dumps cover". In fact `p` is the container pointer and `n` its packed
+   size, so the region is the *free* flash above the shipped database. `0x1F07FFF8` is
+   a logical flash offset, not a bus address. The accessors (`0x8001EF3C`,
+   `0x8001F230`) reach offsets at or above `0x60000` through the
+   `0x1F040000-0x1F05FFFF` window after writing `0x21` to `0x1F060001`, so the bus
+   shows 384 KB, and `v452d.rom` is exactly `0x60000` bytes. The constant search of
+   `REVERSING.md` §10.5 could not see the database, because it is reached through a
+   pointer slot, not a `lui`. The tails were misread too. The last `0x915E` bytes of
+   `english.dec` are `0x8F` bytes of Shift-JIS UI text and the alphabet table, and
+   then the container from `0x44400` to the end of the file. In `v452d.rom` the
+   packed data ends at `0x493A5`, followed by zero pad to `0x49400` and erased flash
+   after.
 
-   Ruled out along the way: a second scrambled or plain `COMP01` blob anywhere in either
-   ROM (there is exactly one, the firmware); the tail being the database under the §5.4
-   scrambler at any start offset in `0x3FF00..0x41000`; and names being stored as
-   indices into a character table — the `ABCDEFGHIJKLM\r\n…` table at image `0x333DA`
-   is the on-screen keyboard grid for the code-entry screen, 13 characters per row.
-   The `0x915E` bytes past the firmware in `english.dec` are Shift-JIS UI text
-   (`\x81\x40` full-width spaces), the same resource area, not a database.
+   Still true from the earlier search: there is exactly one `COMP01` blob per ROM, the
+   firmware; and the `ABCDEFGHIJKLM\r\n…` table at image `0x333DA` is the on-screen
+   keyboard grid for the code-entry screen, 13 characters per row, not a name index.
+   Full 512 KB dumps were not rare either. Both Xlink95 builds read `0x1F000000` for
+   `0x80000` bytes into `ROMS\BackUp.FCD` during an upgrade (`comms.py`, `FCD.md`).
 4. **The `Special32`/`Special33` routes are deliberately not ported.** They are the
    keys 2 and 3, and per 5.2 the firmware really does route `32`/`82` and `33`/`83`
    there — but only those four first bytes, and **the reference's key-2 constants are
@@ -792,19 +836,18 @@ with something, and initials are as good as any other four bytes.
    the right call. Still no evidence any database uses them: every `32`/`33`/`82`/`83`
    line in the three databases is a type 5/6 payload row, and the cart has no encrypt
    side at all. If ported, mind that the firmware leaves `dst[0]` untouched here.
-5. ~~**A header we could not decrypt still starts a block.**~~ — **fixed in `7d15818`.**
-   The key bits of a header are clear both after a successful decrypt and for a header
-   that never carried a key, so `crypt_codes()` now checks exactly that. It was worse
-   than "reads the wrong key": `51123456 6006` turned the following line into
-   `4476D366 AA22`, and a header reading `6FFF` swallowed the next 683 codes.
-
-   > **Ninth pass (`AUDIT.md`): the premise is the cart's opposite.** Both stagers
-   > (`0x1ACCEC` / `0x1AD08C` in `xteng`) classify a header by the *stored* byte 0
-   > high nibble before decrypting it with key −1. Key bits 1-3 send byte 0 to the
-   > copy route, so the cart takes the size field as stored. It stages
-   > `51123456 6006` as a Supercode, and xpcrypt now does not. No shipped database
-   > has such a header, so nothing real is affected, but this was a divergence, not
-   > a fix. The guard also lives in `crypt_code()` now, not `crypt_codes()`.
+5. **A header whose key bits select no cipher - xpcrypt and the cart disagree.**
+   `7d15818` made xpcrypt start a block only when the header's key bits are clear after
+   decryption: either it decrypted, or it never carried a key. It now lives in
+   `crypt_code()`. The motivation was that `51123456 6006` turned the following line
+   into `4476D366 AA22`, and that a header reading `6FFF` swallowed the next 683 codes.
+   The ninth pass (`AUDIT.md`) found that the cart does the opposite. Both stagers
+   (`0x1ACCEC` / `0x1AD08C` in `xteng`) classify a header by the *stored* byte 0 high
+   nibble, before decrypting it with key −1, and key bits 1-3 send byte 0 to the copy
+   route. So the cart stages `51123456 6006` as a Supercode with the size as stored,
+   and it would swallow those 683 codes too. No shipped database has such a header, so
+   nothing real is affected. But the guard is a divergence from the cart, not a fix,
+   and whether to keep it (and warn) is a decision for the C side.
 6. ~~**Extract cheat codes from ROMs.**~~ - **implemented.** `-x`
    accepts either a plaintext ROM or its encrypted `.fcd`, locates the complete
    database after the erased-flash boundary, expands name abbreviations and
@@ -822,42 +865,60 @@ and what each code type does, Part II is how it was found and what stays open.
 The short version, because it changes how to read the rest of this file:
 
 * The cartridge menu firmware never runs while a game does. Codes are applied by
-  a 0x24C-byte blob copied into PSX kernel RAM at `0x00000A00`, hooking the BIOS
-  B-function trampoline at `0x000000B0` and firing on `B(17h)
-  ReturnFromException` - so on every interrupt. Three of the nine images keep
-  that blob inside the packed firmware; the other six keep it unpacked in the
-  ROM, which is why an image-only search finds it in a third of the corpus.
+  a 0x24C-byte blob (V2; the Pro and FX installers copy 0x250) copied into PSX
+  kernel RAM at `0x00000A00`. It hooks the BIOS B-function trampoline at
+  `0x000000B0` and fires on `B(17h) ReturnFromException`, so on every interrupt.
+  Four of the ten images keep that blob inside the packed firmware and the other six
+  keep it unpacked in the ROM, which is why an image-only search finds it in a third
+  of the corpus.
 * It implements eleven of the sixteen types - `0 3 4 5 6 7 8 9 B E F` - as a
-  fall-through `bne` chain, not a table. Types A and D are rewritten during
-  staging into types 5 and F; types 1, 2 and C have no handler anywhere. Type 1
-  is *used* for that: 134 times in the databases, as the inert second line of a
-  type B slide code.
-* **All nine firmwares agree except on type 4** (slow motion), which is present
-  in the five V2/Pro builds and missing from all four FX builds. The other ten
+  fall-through `bne` chain, not a table. Types 1 and 2 have no handler and
+  nothing touches them. Type 1 is *used* for that: 134 times in the databases, as
+  the inert second line of a type B slide code. Types A, C and D have no handler
+  either, but staging rewrites them before the engine sees them: A into a 5, a lone
+  D into an F hoisted to the head of the list, and every `C0` and every other `D0`
+  into a type 7 guard. Only `CD`/`C6`/`C8`-style lines, whose flag nibble survived,
+  reach the engine as type C and do nothing. Every shipped filler or disabled line
+  is one of those.
+* **The last staging pass normalises every code** (executed in all ten images).
+  After decrypting a line, pass 4 makes every address the engine reads as a
+  halfword even:
+  * a byte write at an odd address becomes a type E write one byte down;
+  * a halfword write at an odd address does too, keeping only its low byte;
+  * a misaligned word write becomes a halfword write;
+  * a conditional's address and a slide's step are forced even.
+
+  None of the 15,349 shipped lines is stored as type E, but 1,156 of the 14,939
+  codes among them are type E by the time the console sees them.
+* **All ten firmwares agree except on type 4** (slow motion), which is present
+  in the six V2/Pro builds and missing from all four FX builds. The other ten
   handlers give the same normalized instruction sequence across three languages
   and two hardware generations, as does the order of the chain. Not the same
   bytes: the blob is three byte-distinct groups (§7), and what differs between
-  them is where each build keeps its patch list and support vectors.
+  them is where each build keeps its patch list and support vectors. The FX
+  engines also clear the breakpoint control register (DCIC) on *every* B() call;
+  that is not about a code type and is checked on its own.
 * Type 6 is the interesting one: it programs the R3000's COP0 breakpoint
   registers from the Megacode descriptor and installs the payload at
-  `0x80000040` - the breakpoint exception vector. The payload is not data being
-  poked into the game, it is the handler.
-* **Ninth pass (`AUDIT.md`, `ENGINE.md` top):** the next point and the type C half of
-  the one above it are overturned. Staging pass 4 rewrites `C0`/`D0` into type 7
-  guards and odd-address `30`/`80` into `E0`, so C0 is live, E is generated, and
-  three of the four routeless types are exactly staging's.
-* The four types the cipher gives no route to (2, A, C, E) are *not* the types
-  the engine ignores (1, 2, C, plus A and D at staging). E is a working store
-  instruction that is never encrypted; 1 does nothing and is. The two mechanisms
-  were designed independently.
+  `0x80000040` (written through its uncached alias `0xA0000040`) - the breakpoint
+  exception vector. The payload is not data being poked into the game, it is the
+  handler. Only one Megacode fits a selection: pass 1 stops after the first, and a
+  second one's mask row is hoisted as a type F anchor that almost certainly
+  mismatches, so nothing runs.
+* Three of the four types the cipher gives no route to (2, A, C, E) are staging's:
+  A and C are rewritten and E is generated. Only 2 plays no part anywhere. D, which
+  staging also rewrites, does have a route, so the table is not simply "the staging
+  types" either. The overlap is what the corpus shows, not the reason for it
+  (`ENGINE.md` §7). An earlier version of this note called the two mechanisms
+  independent, before pass 4 had been read.
 
-The **runtime** half is executed, not only read: `engineemu.py` runs each
+The **runtime** half is executed, not only read. `engineemu.py` runs each
 firmware's engine out of the image over a synthetic patch list and records every
-access - 9 firmwares x 26 cases, one difference (type 4, seen in two cases).
-`fwemu.py` grew `lh`/`lhu`/`sh`, the COP0 moves and the multiply unit for it;
-`fxtest.py` still passes. The four *staging* passes are not executed; the
-emulator is fed their output, so what they do with types A and D stays a reading
-(`ENGINE.md` §13).
+access: 10 firmwares x 26 cases, one per-type difference (type 4, seen in two
+cases). It also runs the menu firmware's own four staging passes over real
+selections in all ten images, and the normaliser over 29 codes. What is left a
+reading is the extent of type A and what the R3000 does about an odd address
+(`ENGINE.md` §13, §16).
 
 Two new defects. The first, in `ENGINE.md` §7: the default-off bit survives
 decryption for any code stored with key nibble 0, because `(src[0] & 0xF7) - 4`
@@ -871,8 +932,9 @@ engine           lh 0802A798 | lh 0802A798 | sh 0802A798=FFFF
                     all three outside the console's 2 MB of RAM
 ```
 
-Of the 133 lines in the Xplorer Pro 2.20 database with the bit set, 121 keep it
-through decryption and **120 then use the wrong address**; all 121 also ship in
+Of the 133 lines in the Xplorer Pro 2.20 database with the bit set, all 133 keep it
+through decryption (12 are `CD` filler rows, which the copy route passes untouched).
+121 of them carry no key, and **120 of those then use the wrong address**; all 121 also ship in
 another database, identical apart from that bit (117 distinct rows). Earlier
 counts of 101 and 118 came from suffix-only record chains. Under the saved rule -
 clear bit 3, look for the same six bytes as a dispatched code row elsewhere -
@@ -883,10 +945,11 @@ not really where the bug is - it strips the type nibble and trusts the flag nibb
 is already gone, which the four cipher routes guarantee and the copy route does
 not. What exposed it was not "the first database in the clear" — Pro 2.14 was
 already in the clear — but the first database to set the default-off bit on rows
-that carry no key. Not run on hardware, so what an R3000 does about the bad
-address is still open.
+that carry no key - among the V2 databases. The FX 3.20 and 4.52 databases (6.3)
+carry 112 keyless default-off rows each at an addressed type. Not run on hardware,
+so what an R3000 does about the bad address is still open.
 
 The second is a boundary: both block handlers copy one unit before they decrement
 and test the count, so a Supercode or Megacode declaring zero payload bytes loops
-forever. All nine engines hang on it, and the German database ships two such
+forever. All ten engines hang on it, and the German database ships two such
 Supercodes (`War Games`).

@@ -17,13 +17,17 @@ What it adds to the corpus and to the argument:
   * a **wider classifier scan**.  ENGINE.md 13 enumerates one idiom, `andi
     rX, rY, 0xF0`.  Three are enumerated here - that one, `srl rX, rY, 0x1C`
     (which is how the engine itself does it) and `andi rX, rY, 0xF000`.  Union
-    over ten images: types 3 to F except C.  Nothing anywhere looks at 2 or C;
+    over ten images: types 3 to F except C.  The idioms cannot see whole-byte
+    compares, and that is where C is looked at: the pass-4 normaliser turns a
+    `C0` line into a type 7 guard in all ten images, executed here.  Nothing
+    anywhere looks at 2;
   * the **three conventions** the 27 shipped type C lines split into, each
     checked rather than described: 17 filler lines that share a byte 0, 4 lines
     in the USA database that are *disabled type 8 codes* - re-type the first
     nibble to 8, decrypt with the key the line's own flag nibble declares, and
     the address is exactly the address of the type 8 line below it - and 6
-    Japanese joker codes;
+    Japanese joker codes.  The first two carry a flag nibble (`CD`, `C6`) and
+    stay inert; the jokers are stored `C0` and work, as type 7 guards;
   * **two joker conventions in one database.**  The Japanese Pro database tests
     the pad in two mutually inconsistent ways.  Five cheats use type 7 with an
     active-high mask in the byte order FCD's own tool documents; six use type C
@@ -40,10 +44,10 @@ What it adds to the corpus and to the argument:
 
 Everything asserted here is drawn from the binaries in `roms/` and `pc/`; no
 network. For the off-corpus corroboration - that every contemporary write-up of
-the format documented type C as a Datel-compatibility if-then conditional that
-no Xplorer was ever seen to run, and that psx-spx lists X-Terminator (Japan) as
-one device with the Xplorer/Xploder - see ENGINE.md 16, which cites the web
-sources.
+the format documented type C as a Datel-compatibility if-then conditional, which
+is what the firmware makes of a `C0` line, and that psx-spx lists X-Terminator
+(Japan) as one device with the Xplorer/Xploder - see ENGINE.md 16, which cites
+the web sources.
 
 `ENGINE.md` has the instruction set, `dbtypes.py` the per-type database counts,
 `engine.py` the dispatch chains, `ENCRYPT.md` and `FCD.md` the PC binaries.
@@ -58,6 +62,7 @@ import tempfile
 import db2
 import dbtypes
 import engine
+import engineemu
 import fwimage
 import mipscan
 import romcrypt
@@ -209,28 +214,63 @@ def classifiers(path):
     return out
 
 
+# The idioms above all isolate a nibble.  The last staging pass does not: every
+# line it emits goes through a normaliser after decryption, and that compares
+# whole first bytes - so it is invisible to all three, and it is where type C
+# is looked at.  `engine.normaliser` finds it and `engineemu.Stager` runs it, and
+# which types it rewrites is measured here by executing it over one line of
+# each type at an odd address, not read off its constants.
+NORM_TYPES = {0x0, 0x3, 0x7, 0x8, 0xB, 0xC, 0xD}
+
+
+def normalised_types(stager):
+    out = set()
+    for t in range(16):
+        c = '%X0100001 ABCD' % t
+        if stager.normalise(c) != c:
+            out.add(t)
+    return out
+
+
 def part1(paths):
-    print('== 1. no handler and no classifier, in ten images ==')
-    union = set()
+    print('== 1. handlers and classifiers, in ten images ==')
+    union, norm = set(), set()
     for label, path in paths:
         chain = [t for t, _ in engine.dispatch(path)]
         sites = classifiers(path)
         u = sorted({t for _, _, v in sites for t in v})
         union |= set(u)
+        st = engineemu.Stager(path, label)
+        nt = normalised_types(st)
+        norm |= nt
         check(not ({1, 2, 0xC} & set(chain)),
               '%s: dispatch chain contains 1, 2 or C' % label)
-        check(not ({2, 0xC} & set(u)),
-              '%s: a classifier reads type 2 or C' % label)
-        print('  %-28s engine %-30s classifiers %2d sites, types %s'
+        check(2 not in u, '%s: a classifier reads type 2' % label)
+        check(nt == NORM_TYPES, '%s: the normaliser rewrites types %s, expected %s'
+              % (label, ' '.join('%X' % t for t in sorted(nt)),
+                 ' '.join('%X' % t for t in sorted(NORM_TYPES))))
+        check(st.normalise('C006A2EA B7FF') == '7006A2EA B7FF',
+              '%s: a C0 line does not come out as a type 7' % label)
+        print('  %-28s engine %-22s classifiers %2d sites, types %-24s '
+              'normaliser %08X rewrites %s'
               % (label, ' '.join('%X' % t for t in chain), len(sites),
-                 ' '.join('%X' % t for t in u)))
+                 ' '.join('%X' % t for t in u), st.norm,
+                 ' '.join('%X' % t for t in sorted(nt))))
         for a, k, v in sites:
             say('       %s %-9s %s' % (a, k, ' '.join('%X' % x for x in v)
                                        or '(constant not resolved)'))
-    print('  union over the corpus: %s' % ' '.join('%X' % t for t in sorted(union)))
+    every = union | norm
+    print('  union over the corpus: idioms %s; with the normaliser %s'
+          % (' '.join('%X' % t for t in sorted(union)),
+             ' '.join('%X' % t for t in sorted(every))))
+    print('      -> C is looked at, by whole byte: a C0 line leaves staging as a '
+          'type 7.\n         Nothing in ten images looks at 1 or 2.')
     check_full(union == set(range(3, 16)) - {0xC},
           'classifier union is %s, expected 3..F without C'
           % ' '.join('%X' % t for t in sorted(union)))
+    check_full(every == set(range(16)) - {1, 2},
+          'union with the normaliser is %s, expected everything but 1 and 2'
+          % ' '.join('%X' % t for t in sorted(every)))
 
 
 # ------------------------------------------------------- 2. no type 2 anywhere
@@ -368,6 +408,27 @@ def part3(dbs):
           % (raw_ok, swap_ok))
     check_full(raw_ok == 6, 'the joker masks do not decode in the hardware byte order')
     check_full(swap_ok == 0, 'the joker masks also decode in the swapped byte order')
+
+    # What the cartridge makes of all 27, by running the Japanese firmware's own
+    # pass-4 normaliser over each decrypted line.  It matches whole first bytes:
+    # the filler and the disabled codes carry a flag nibble (CD, C6) and pass
+    # through untouched, so the engine skips them; the jokers are stored C0, the
+    # cipher copies them, and each leaves staging as a type 7 equality guard over
+    # the write below it.
+    jpro = os.path.join('roms', 'xtjpro.dec')
+    if os.path.exists(jpro):
+        st = engineemu.Stager(jpro)
+        same = lambda r: st.normalise(fmt(romcrypt.decrypt(list(r[3]))))
+        inert = sum(same(r) == fmt(r[3]) for r in filler + disabled)
+        live = sum(same(r)[:2] == '70' for r in joker)
+        for r in joker:
+            say('      %s -> staged %s' % (fmt(r[3]), same(r)))
+        print('  staged by Pro 2.14\'s own normaliser: %d/%d filler and disabled '
+              'lines untouched,\n      %d/%d jokers come out as type 7 guards'
+              % (inert, len(filler) + len(disabled), live, len(joker)))
+        check(inert == len(filler) + len(disabled),
+              'the normaliser rewrites a filler or disabled type C line')
+        check(live == len(joker), 'a joker is not staged as a type 7 guard')
     return joker
 
 
@@ -655,12 +716,13 @@ def part7():
     print('      -> a stranger writing down the same format in 1999 had "??" '
           'against\n         exactly 1, 2, A and E, and called C and D obsolete '
           'Datel\n         compatibility.  He is right about every type the '
-          'engine implements\n         and wrong about C, which no firmware '
-          'has a handler for - so "C is a\n         conditional" was a current '
-          'belief in 1999 and was not read out of the\n         firmware.  '
-          'Nothing anywhere in his binary dispatches on a type nibble,\n'
-          '         so this is his documentation of the format, not his '
-          'implementation of it.')
+          'engine implements,\n         and about C and D as well: neither has '
+          'an engine handler, but staging\n         turns a C0 into a type 7 '
+          'guard and a D0 into a 7 or a hoisted F.  What\n         he could not '
+          'have known is that a C or D with its flag nibble set does\n'
+          '         nothing.  Nothing anywhere in his binary dispatches on a type '
+          'nibble,\n         so this is his documentation of the format, not '
+          'his implementation of it.')
 
 
 # ---------------------------------------------------------------------- main
@@ -705,23 +767,27 @@ def main():
   What would still settle it: FCD documentation, the X-Link PRO / v1.10 that
   RelNotes.txt promises, or a cartridge dump with a database nobody here has.
 
-  Type C is the format's inert type, and it was used for three different things
-  by three different hands.  Filler (17 lines, one line copied and edited).  A
-  disabled type 8 code (4 lines, ciphertext intact, address confirmed against
-  the line below).  And six Japanese joker codes whose masks are the raw pad
-  halfword, active low - not the byte order FCD's own tool documents, and not
-  what FCD's own joker generator emits, which is a type 7 or 9 guard.  The same
-  Japanese database tests the pad the FCD way five times over, so the type C
-  codes came from a different hand than the type 7 ones - which is what the
-  "(X-T用)" / "(X-Tのみ)" markers elsewhere in that database are for.  No
-  firmware in the corpus runs them, so those six cheats write unconditionally.
+  Type C has no engine handler, and staging decides what a C line is.  A C0 -
+  no key, no flag - leaves the pass-4 normaliser as a type 7 equality guard; a
+  C with its flag nibble set passes through untouched and the engine skips it.
+  The 27 shipped lines use both.  Filler (17 lines, one line copied and edited)
+  and disabled type 8 codes (4 lines, ciphertext intact, address confirmed
+  against the line below) are CD and C6, and inert.  The six Japanese joker
+  codes are stored C0 and work, as type 7 guards over the write below them.
+  Their masks are the raw pad halfword, active low - not the byte order FCD's
+  own tool documents, and not what FCD's own joker generator emits, which is a
+  type 7 or 9 guard.  The same database tests the pad the FCD way five times
+  over, in other games.  So the type C jokers follow another convention than
+  the type 7 ones: another hand's, which the "(X-T用)" / "(X-Tのみ)" markers
+  elsewhere in that database would fit, or another game's way of storing the
+  pad.  The firmware does not say which.
 
   And the lead that opened this - X-Link's second device - is not one.  The
   X-Terminator is the Japanese name of the Xplorer: seven brand strings in the
   packed firmware, the same seven places in three languages, Xplorer / Xploder /
   X-Terminator.  In XLink.exe the whole X-Terminator branch is a banner and a
   contact address behind a predicate stubbed to zero, and running all 3,920
-  functions of the four PC binaries (`make encrypt`, `make fcd`) finds eighteen
+  call targets of the four PC binaries (`make encrypt`, `make fcd`) finds eighteen
   cipher routines, every one of them this device's.""")
 
     for p in problems:

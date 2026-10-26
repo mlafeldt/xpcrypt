@@ -7,7 +7,9 @@ trampoline it drops on the BIOS B-function entry point at 0x000000B0.  Every
 `ReturnFromException` - B(17h), so every interrupt - then walks the patch list in
 cartridge flash and applies the codes.  That loop is the only place in any of the
 nine firmwares that dispatches on a code's type nibble at run time, so it is the
-authoritative answer to "what does type X do".
+authoritative answer to "what does type X do" - for the code the console is
+handed.  What it is handed is decided earlier, by the staging passes, and the
+last of them rewrites types 0, 3, 7, 8, B, C and D on the way (normaliser()).
 
 Located by the trampoline rather than by an address: the three oldest images
 carry the engine inside the packed firmware, the other six keep it unpacked in
@@ -15,7 +17,8 @@ the ROM.
 
 What it all means is written up in ENGINE.md.
 
-    uv run --with capstone python engine.py            # dispatch chain, all ROMs
+    uv run --with capstone python engine.py            # dispatch chain and the
+                                                       # pass-4 normaliser, all ROMs
     uv run --with capstone python engine.py -v xteng   # annotated listing
     uv run --with capstone python engine.py -s         # staging classification sites
 """
@@ -122,6 +125,10 @@ def staging(path):
     and the per-site lists are indicative only.  What the enumeration supports is
     the *union*: the set of type nibbles the firmware is seen to test outside the
     run-time engine.  That union is `5 6 7 9 A D F` at every window size tried.
+
+    It is not every place the firmware looks at a type.  The pass-4 normaliser
+    compares whole first bytes - `lbu`, a constant, `beq`/`bne` - and tests 0, 3,
+    7, 8, B, C and D without a single `andi ..., 0xf0`; see normaliser().
     """
     img, base = fwimage.load(path)
     ins = mipscan.dis(img, base)
@@ -148,6 +155,43 @@ def staging(path):
                         seen.append(v >> 4)
         out.append(('%08X' % i.address, seen))
     return out
+
+
+# The last staging pass hands every line it emits, decrypted, to one function,
+# and that function rewrites it before it becomes a list entry (ENGINE.md 13):
+# C0, D0 and 70 come out as 70 at an even address, an odd-address 30 or 80 as E0
+# one byte down, a misaligned 00 as 80, and a B0 with its address step made
+# even.  It compares whole first bytes, so no type-nibble idiom finds it - it is
+# found here by the bytes it rewrites to and from, and it has to have exactly
+# one caller, the pass-4 loop.  `engineemu.py` executes it.
+NORM_CONSTS = {0x30, 0x70, 0x80, 0xB0, 0xC0, 0xD0, 0xE0}
+
+
+def functions(ins):
+    """Split a listing at every `jr $ra` and its delay slot."""
+    start = 0
+    for k, i in enumerate(ins):
+        if i.mnemonic == 'jr' and i.op_str == '$ra':
+            yield ins[start:k + 2]
+            start = k + 2
+
+
+def normaliser(path, ins=None):
+    """(address, [caller, ...]) of every function shaped like the normaliser."""
+    if ins is None:
+        img, base = fwimage.load(path)
+        ins = mipscan.dis(img, base)
+    found = []
+    for body in functions(ins):
+        consts = {int(m.group(1), 0) for x in body if x.mnemonic == 'addiu'
+                  for m in [CONST.match(x.op_str)] if m}
+        if (len(body) < 80 and NORM_CONSTS <= consts and
+                any(x.mnemonic == 'andi' and x.op_str.endswith(', 0xfe')
+                    for x in body)):
+            a = body[0].address
+            found.append((a, [x.address for x in ins if x.mnemonic == 'jal'
+                              and int(x.op_str, 0) == a]))
+    return found
 
 
 # The two published tables (ENGINE.md 6 and 13), as conditions rather than as
@@ -208,10 +252,22 @@ if __name__ == '__main__':
         for p in ROMS:
             c = dispatch(p)
             chain = ' '.join('%X' % t for t, _ in c)
-            print('%-42s %s' % (os.path.basename(p), chain))
-            if chain not in (EXPECT_CHAIN_V2, EXPECT_CHAIN_FX):
-                problems.append('%s: chain %s, expected %s (V2/Pro) or %s (FX)'
-                                % (os.path.basename(p), chain,
-                                   EXPECT_CHAIN_V2, EXPECT_CHAIN_FX))
+            norm = normaliser(p)
+            print('%-42s %-22s normaliser %s' % (
+                os.path.basename(p), chain,
+                ', '.join('%08X, called from %s' % (a, ' '.join('%08X' % x for x in cs))
+                          for a, cs in norm) or 'not found'))
+            # which chain is decided by the image, not by whichever one matches:
+            # an FX build that grew a type 4 handler back would be news
+            fx = fwimage.fx_blob(open(p, 'rb').read()) is not None
+            want = EXPECT_CHAIN_FX if fx else EXPECT_CHAIN_V2
+            if chain != want:
+                problems.append('%s: chain %s, expected %s (%s)'
+                                % (os.path.basename(p), chain, want,
+                                   'FX' if fx else 'V2/Pro'))
+            if len(norm) != 1 or len(norm[0][1]) != 1:
+                problems.append('%s: %d normaliser(s) with callers %s, expected '
+                                'one, called once' % (os.path.basename(p), len(norm),
+                                                      [cs for _, cs in norm]))
         print('\n(order is the order of the bne chain, not sorted)')
         sys.exit(report(problems))

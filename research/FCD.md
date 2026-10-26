@@ -5,7 +5,7 @@ forced out of matched encrypted/decrypted ROM pairs, plus the dead
 `xp_bf_rom()` routine that produced them. Where is the real thing?
 
 Short answer: **not in the ROM, and there never were any tables.** The cipher is
-twenty-one instructions and three constants, it lives in the vendor's PC-side
+a twenty-two-instruction loop and three constants, it lives in the vendor's PC-side
 upgrade tool, and the cartridge firmware neither contains it nor could use it.
 Both directions of it have been recovered from four PC binaries - the vendor's
 DOS tool, two builds of its Windows successor, and a third party's - and every
@@ -58,7 +58,9 @@ same three constants: both 1999 builds of the Windows successor `Xlink95.exe`, a
 section 5 how the routines were found and section 5a how they were checked by
 running them. The `.fcd` on disk is simply the transport form of an image: before
 flashing a new one, XLink reads the cartridge's current ROM back, *encrypts* it,
-and writes it out as `ROMS\BackUp.FCD`.
+and writes it out as `ROMS\BackUp.FCD` - 256 KB from `0x1F000000` in the DOS
+build, a `0x80000`-byte read from the same base in both Windows builds (ninth
+pass).
 
 **4. xpcrypt's former tables are right as a function and wrong as bytes.** They agree
 with the routine on all 512 x 256 (offset, byte) inputs, and differ from the
@@ -231,7 +233,8 @@ mkdir out && ./unshieldv3 extract ../_SETUP.1 out   # it will not mkdir for you
 
 Five files come out of each: `Xlink95.exe`, `XLinkWin.doc`, `RelNotes.txt`,
 `Xlink.mrf`, `cset.bin`. The two `Xlink95.exe` are both 1,765,376 bytes and both
-report `Xlink95 Version 1.1`, but they are different builds - stamped 1999-07-02
+report `Xlink95 Version 1.1` in their About text (the version resource of both
+says `1.07`), but they are different builds - stamped 1999-07-02
 in the mirror's zip and 1999-08-04 in the Wayback one - and the later one is a
 substantial relayout, 215,702 bytes of `.text` differing. Its cipher routines are
 not among the changes: those are byte-identical between the two builds, at
@@ -241,7 +244,7 @@ So `pc/` ends up holding four binaries, and eight routines:
 
 | file | | |
 |---|---|---|
-| `XLink.exe` | DOS X-Link V1.091, 1998-11-05 | Watcom, DOS/4GW LE |
+| `XLink.exe` | DOS X-Link V1.091, "Released : 19/10/98" | Watcom, DOS/4GW LE |
 | `Xlink95-19990702.exe` | Xlink95 v1.1, 1999-07-02 build | MSVC/MFC, Win32 PE |
 | `Xlink95.exe` | Xlink95 v1.1, 1999-08-04 build | same, `.text` differs |
 | `x-killer.exe` | X-Killer v0.55, 1999-10-02 | third party, Win32 PE |
@@ -249,10 +252,16 @@ So `pc/` ends up holding four binaries, and eight routines:
 `x-killer.exe` is the interesting one. It is by Tim Schuerewegen, not FCD, and it
 is an **independent implementation**: same three constants, same order of
 operations, but `shr` where the vendor writes `sar`, `cdecl` where the vendor uses
-register arguments, and in place over one buffer instead of src/dst. Its file-type
-list offers `"FCD N64 ROM - Encrypted"` beside the PSX ones, and it holds only
-these two cipher routines, so as far as that tool is concerned one transform
-covered FCD's N64 product too. The same author's other tool,
+Watcom registers (DOS) or `stdcall` (Windows), and in place over one buffer instead
+of src/dst. Its file-type list offers `"FCD N64 ROM - Encrypted"` beside the PSX
+ones, and it holds only these two cipher routines, so as far as that tool is
+concerned one transform covered FCD's N64 product too. The binary pins that down
+rather than just the UI string (ninth pass): its file-type classifier at
+`0x4083D0` calls a file an encrypted N64 ROM when byte `0x200` is `'i'` and byte
+`0x40` is `'?'`, which is exactly this cipher applied to the N64 plaintext marks
+`'X'` at `0x200` and `'F'` at `0x40` (mask `0x45`, addend `0x2C` at `0x200`; mask
+`0x25`, addend `0x2C` at `0x40`), and the loader that accepts it (`0x4061A0`)
+decrypts it with the same routine, `0x408350`. The same author's other tool,
 `x-flash-v1.2-beta-3.zip` from the same mirror, does *not* contain the cipher:
 `xflash.exe` is a PSX-side executable and its `romfile.exe` builder takes `*.rom`,
 already plaintext.
@@ -358,7 +367,8 @@ is how `xlink.py` labels them.
 
 One faithfulness note: the shift is arithmetic (`sar`), so a hypothetical input
 above 2 GiB would differ from the logical shift `fcdcrypt.py` uses. Not
-reachable - the caller caps the buffer at `0x40000`.
+reachable - the caller caps the buffer at `0x40000` (the Windows builds at
+`0x80000`).
 
 **In the other three binaries** the same search works, because the one thing every
 build spells identically is the addend - `and r8, 0x37` then `xor r8, 0x2c`, in
@@ -390,7 +400,8 @@ xor in two, which is the same value because truncation commutes with xor:
 ```
 
 `x-killer.exe` is shorter still - `cdecl(buf, len)`, one buffer, `shr` for the
-shift - and lands on the same twelve-instruction body.
+shift - and lands on the same fifteen-instruction loop (`0x408360`-`0x40837D`;
+ninth pass, this used to say twelve). The DOS loop above is twenty-two.
 
 **There is no second, legacy path.** Each of the Windows routines has exactly one
 caller, and the strings around them say which: `0x41ACCF` is the "Upgrade ROM"
@@ -498,7 +509,7 @@ $F -d 0x1A12C0 24         # the receive helper: handshake only
 
 Now implemented in the shipped source:
 
-* The 1 KB of seed tables in `crypto.c` became two expressions, and
+* The 1 KB of seed tables in `xp_crypto.c` became two expressions, and
   `xp_encrypt_rom()`/`xp_decrypt_rom()` two-line loops. The tables were not wrong;
   they were 1024 bytes spelling out six operations.
 * `XP_ROM_BLKSIZE` and the "ECB mode" comment are gone. The explicit functions
@@ -514,7 +525,8 @@ Now implemented in the shipped source:
 What is left genuinely open is small, and it is archaeology rather than
 uncertainty about the cipher. No binary of X-Link V1.06 through V1.09, or of the
 promised V1.10, appears to survive anywhere (section 4), so the oldest
-implementation we can execute is V1.091 from November 1998. Two things make that
+implementation we can execute is V1.091 from October 1998 - the binary says
+"Released : 19/10/98", `RelNotes.txt` dates the release 13/10/98. Two things make that
 a formality rather than a gap. The cipher is pinned by the files, not by the
 tools: every `.fcd` the vendor shipped, spanning firmware 2.008 to 4.52 and both
 hardware generations, decrypts with these three constants into an image that

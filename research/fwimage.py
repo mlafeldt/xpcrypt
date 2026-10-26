@@ -11,8 +11,11 @@ Nothing here is keyed on a file name: the generation is detected from the bytes
 and the load address is read back out of the firmware - see base_of().
 
 V2 firmwares address themselves through KUSEG (0x001Axxxx) and FX ones through
-KSEG0 (0x8005xxxx); the base that comes back is the one the jump table is written
-against, so its entries can be looked up in the image directly.
+KSEG0 (0x8001xxxx-0x8005xxxx); the base that comes back is the one the jump table
+is written against, so its entries can be looked up in the image directly.  It
+is not where a V2 image is entered: the boot stub unpacks it to KSEG0 0x801A0000
+and jumps to 0x801A0008, the same RAM through the other segment, and the
+firmware only drops into KUSEG at its first jump through a pointer.
 """
 import struct
 
@@ -51,8 +54,9 @@ def base_of(img):
     route of its own, so disassembling at zero and subtracting gives the base
     outright.  (Counting lui/addiu pairs that name the constant tables looks
     like it would work too, and does for most ROMs - but the German V2 firmware
-    carries two sets of them, one exactly 0x1000 apart from the other, and the
-    vote ties.)"""
+    also names three debug strings, "Here1!!" and its neighbours, that sit
+    exactly 0x1000 below the tables.  Read as table references they vote for a
+    base 0x1000 too low, and the vote ties.)"""
     t = img.find(TABLES)
     if t < 0:
         raise ValueError('no constant tables - not an Xplorer firmware?')

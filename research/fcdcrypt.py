@@ -3,9 +3,9 @@
 
 Not to be confused with `romcrypt.py`, which is the *code* cipher out of the
 cartridge firmware. This one is the whole-image transform between a distributed
-`.fcd` file and the plaintext ROM - what `xpcrypt -r` does. The cipher is
-twenty-one instructions with two one-line functions of the file offset; xpcrypt
-formerly stored 1 KB of values produced by those functions.
+`.fcd` file and the plaintext ROM - what `xpcrypt -r` does. The cipher is a
+twenty-two-instruction loop over two one-line functions of the file offset;
+xpcrypt formerly stored 1 KB of values produced by those functions.
 
 Transcribed from `XLink.exe` of the DOS X-Link distribution - the binary reports
 itself as V1.091 - which is the vendor's own upgrade utility (`XLink.exe:0x2A4A0`,

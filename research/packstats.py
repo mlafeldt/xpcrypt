@@ -10,7 +10,9 @@ what it says about how the format was designed is an inference (5.1b).
 Also prints the budget for re-packing an image, which the "no packer" note in
 TODO.md rests on: a store-only encoder is valid but too big to fit, while the LZ
 opcode alone recovers 96-97% of what FCD's own compressor saved on eight of the
-nine images, and 70% on english-452.dec.
+nine images, and 70% on english-452.dec.  That last one is FCD's encoder, not the
+data: english-452's stream has 3,373 LZ matches where the other 4.52 build's has
+16,240, and the two images unpack to data that compresses equally well.
 """
 import glob
 import sys
@@ -61,9 +63,12 @@ def main():
             n, saved = st.get(op, (0, 0))
             print('   %-15s %7d uses  %+8d bytes' % (op, n, saved))
 
-        # A store-only re-pack: every byte a literal, escapes doubled. Counted
-        # with the 14-byte header, the same way `used` is, so the two compare.
-        store = 0xE + len(out) + st.get('literal-escape', (0, 0))[0]
+        # A store-only re-pack: every byte a literal, and every byte that equals
+        # one of the four escapes written as `esc 00`. That is every occurrence
+        # in the output, not the original stream's literal-escape count, which
+        # leaves out the ones FCD's matches and runs covered. Counted with the
+        # 14-byte header, the same way `used` is, so the two compare.
+        store = 0xE + len(out) + sum(out.count(e) for e in set(esc))
         over = 100.0 * (store - used) / used
         lz = 100.0 * st.get('lz-match', (0, 0))[1] \
             / max(1, sum(v[1] for v in st.values() if v[1] > 0))

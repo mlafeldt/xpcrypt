@@ -8,7 +8,8 @@ by *executing* both rather than by reading them.
 The routine calls exactly two functions, and both are stubbed:
 
   strncpy      loads a 4-byte constant table onto the stack.  V2 reaches the
-               BIOS A(0x1A); FX has its own copy inlined at 0x80012AA8.
+               BIOS A(0x1A); FX has its own copy (0x80012AA8 in 3.20,
+               0x80012B28 in 4.50 and 4.52).
   the checker  V2 calls it as f(0x1F000000, 0x18000) at the end of a route, FX
                as f(6, 0x18000) at the start.  It is the copyright check on the
                cheat database - see fxprot.py - and on real hardware it can
@@ -19,8 +20,9 @@ The routine calls exactly two functions, and both are stubbed:
 
 Stubbing is decided when control first reaches a function through jal/jalr, not
 by working out where the routine ends - it has no end to find.  Its routes are
-reached through a jump table and in the German V2 firmware they sit 0x1000 bytes
-away from the dispatcher, with unrelated functions in between.
+reached through a jump table, so nothing says they sit next to the dispatcher.
+(In every image here they do.  An earlier note had the German V2 routes 0x1000
+bytes away; that was a load address 0x1000 too low, see fwimage.base_of.)
 
 Anything the routine touches outside the mapped image and scratch RAM raises,
 so a wrong guess about the memory map shows up instead of silently reading 0.
@@ -246,9 +248,9 @@ class Firmware:
         self.table = [struct.unpack_from('<I', img, t + 24 + 4 * i)[0]
                       for i in range(244)]
         # the dispatcher masks the first code byte with 0xF7; the routine starts
-        # at the nearest stack frame above it.  Its routes need not sit next to
-        # it - in the German V2 firmware they are 0x1000 bytes away - so no
-        # attempt is made to guess where the routine ends.
+        # at the nearest stack frame above it.  Its routes are reached through
+        # the jump table and need not sit next to it, so no attempt is made to
+        # guess where the routine ends.
         disp = next(i for i, x in enumerate(self.ins)
                     if x.mnemonic == 'andi' and x.op_str.endswith('0xf7'))
         self.entry = self.ins[next(i for i in range(disp, 0, -1)

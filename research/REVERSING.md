@@ -69,8 +69,11 @@ question is "what does this program do", stop reasoning about its output.
 (§11). Hidden behind the one call I had written off as inert: a comparison of
 the cheat database's header against `"(C) 1997/8 FCD"` — stored bitwise NOTed so
 `strings` cannot see it — and, on a mismatch, `flash_write(0x3E8, 0x1F000000,
-0x18000)`, which programs 96 KB of PSX kernel RAM over the cart's own firmware.
-Present in eight of the nine firmwares, and the FX builds hide it harder. This
+0x18000)`, which programs 96 KB of low PSX RAM over the cart's own firmware.
+Present in nine of the ten firmwares (the tenth being 2.005, shipped inside the
+DOS X-Link tool), and the FX builds hide it harder. One of them, Pro 2.14, does
+not even need the copyright touched: its check string predates its own header,
+so the first key-7 or Special32 code a user activates sets it off (§11.3). This
 is what FCD's protection actually looks like; everything else in this file is
 just a cipher.
 
@@ -107,10 +110,15 @@ Two more things to keep in front of you while reading MIPS:
 * **Every branch and jump has a delay slot.** The instruction *after* a branch
   executes before the branch is taken. Half the constants in this firmware are
   set in delay slots.
-* **Segments.** Code addresses here are KSEG0 (`0x801Axxxx`), but data pointers
-  are formed as KUSEG (`0x001Cxxxx`). Same physical memory, 0x80000000 apart.
-  File offset = address - 0x1A0000 for the unpacked image, regardless of which
-  segment the address was written in.
+* **Segments.** The boot stub unpacks the V2 firmware to KSEG0 `0x801A0000` and
+  enters it at `0x801A0008`, but the image is linked for KUSEG: every absolute
+  pointer it holds - data (`0x001Cxxxx`) and code alike, the jump-table entries
+  of §6.2 included - is `0x001Axxxx`/`0x001Cxxxx`, so after the first jump
+  through a table the firmware runs in KUSEG. Same physical memory, 0x80000000
+  apart. The listings in §4-§7 are quoted at the KSEG0 address they were first
+  read at, §11 and `fwimage.load()` at the KUSEG one. File offset =
+  (address & 0x1FFFFFFF) - 0x1A0000 for the unpacked image, whichever segment
+  the address was written in.
 
 
 ## 1. Where does the ROM start
@@ -128,13 +136,14 @@ top nibble of PC = `j 0x1F0001DC`. Base confirmed - now every address in the
 listing is a file offset plus `0x1F000000`.
 
 `"FCD = WHB PJH DN MW IN R?"` in the header is the team's initials; WHB is Wayne
-Hughes Beckett. The same string turns up as a credit at `0x560`. Keep that in
-mind, it becomes load-bearing in step 3.
+Hughes Beckett. A second copy of it sits at `0xD0`, and his name turns up in full
+as a credit at `0x560`, `"Wayne Hughes Beckett!"`. Keep that in mind, it becomes
+load-bearing in §4.1.
 
 
 ## 2. First attempt, and why it failed
 
-The obvious move is to search for the cipher constants. `crypto.c` is full of
+The obvious move is to search for the cipher constants. `xp_crypto.c` is full of
 them: `0x57 0x42 0x31 0x32 0x33` (key 5), `0xAB` (key 6), `0x25 0xFA 0x12`
 (key 4), `0x73 0x90 0x35` (key 7).
 
@@ -351,11 +360,14 @@ The same measurement answers a question I had already answered wrongly. I had
 written that a ROM could not be rebuilt without FCD's compressor. Not so: the
 decompressor is the specification, and *any* stream it accepts is valid, so an
 encoder need not resemble theirs at all. What actually constrains you is size -
-a store-only encoder runs +33% over the original packed size (`0x2BFAE` against
+a store-only encoder runs +33% over the original packed size (`0x2BFC8` against
 `0x210CB` on `xteng.dec`, both counted with the header) and collides with the
 code database, while the LZ opcode alone accounts for 96-97% of what their own
 matcher saved. That last figure bounds the prize, not the effort: it says what
-*their* matcher found, not what a new one would find.
+*their* matcher found, not what a new one would find. (This note used to give
+`0x2BFAE`, which doubles only the 136 escape bytes the original stream had to
+escape. A store-only stream has nothing to hide them in and must escape every
+one of the 162 in the output.)
 Reversing a decoder gives you an encoder for free; reversing it and then not
 noticing that is the mistake.
 
@@ -498,7 +510,7 @@ and each output byte is fed back into it:
 ```
 801AC0D0  addiu $a0, $sp, 0x10
 801AC0D8  addiu $a1, $a1, -0xd64     ; 0x1BF29C = "WHBX"
-801AC0DC  jal   0x801a3d0c           ; memcpy(sp+0x10, "WHBX", 4)
+801AC0DC  jal   0x801a3d0c           ; strncpy(sp+0x10, "WHBX", 4), BIOS A(0x1A)
 801AC0E0  addiu $a2, $zero, 4
 
 801AC104  lbu   $a0, 0x10($sp)       ; w0
@@ -568,7 +580,7 @@ With `0x76 + 0x7F = 0xF5` this turns the ROM's `+ (w2 ^ 0xEF)` into our
 801AC058  lbu   $v0, 3($s0)
 801AC060  addiu $v0, $v0, 0x44       ; 'D'
 801AC068  lbu   $v0, 4($s0)          ; bytes 4 and 5 copied
-801AC07C  jal   0x801a4620           ; (a checksum-ish call, also in key 7)
+801AC07C  jal   0x801a4620           ; the copyright check (§11), also in key 7
 ```
 
 First bytes `32`/`82`: add `"FCD"` to bytes 1, 2, 3. The reference
@@ -647,9 +659,12 @@ code type, and it therefore applies to Megacodes as well.
 ## 7. The block stagers
 
 Same image, two callers that pass a real key. They confirm the header layout
-without any guesswork.
+without any guesswork. The addresses below are of the instructions quoted, not of
+function entries: the Supercode stager starts at `0x801AD010`, and the Megacode
+one is not a function of its own but the tail of the list walker at `0x801ACC74`,
+which skips Supercode blocks on its way to the first Megacode.
 
-Supercode, `0x801AD1F0`:
+Supercode, in `0x801AD010`:
 
 ```
 801AD1B4  lui   $a0, 0x2aaa
@@ -664,7 +679,7 @@ Supercode, `0x801AD1F0`:
 801AD2B4  lbu   $v0, ($v1)           ; and copied out in order
 ```
 
-Megacode, `0x801ACE0C`:
+Megacode, in `0x801ACC74`:
 
 ```
 801ACE2C  jal   0x801abf94           ; header, a2 = -1
@@ -692,11 +707,11 @@ Row count `2 + ceil((nnnn - 2) / 6)` = our `ceil((nnnn + 10) / 6)`. And there is
 no special case anywhere: the descriptor is decrypted with the payload key like
 every other row. That is the bug this exposed in xpcrypt - see `br.txt`.
 
-(Trivia: the *list walker* at `0x801ACD30` computes the type 5 row count as
-`((hi & 0xF) << 8) | (lo + 5)` - an `or` where the stager uses `add`. It
-miscounts when `lo + 5` carries into bit 8, which needs `lo >= 0xFB`, *and* the
-carry is lost, which needs an odd `hi`; an even `hi` gives the same answer either
-way. A genuine firmware bug, and a narrow one.)
+(Trivia: the *list walker*, at `0x801ACD30` in the same function, computes the
+type 5 row count it skips as `((hi & 0xF) << 8) | (lo + 5)` - an `or` where the
+stager uses `add`. It miscounts when `lo + 5` carries into bit 8, which needs
+`lo >= 0xFB`, *and* the carry is lost, which needs an odd `hi`; an even `hi` gives
+the same answer either way. A genuine firmware bug, and a narrow one.)
 
 
 ## 8. Validating the reading
@@ -817,7 +832,11 @@ value already masked to 8 bits is a rotate, not a shift — the `sb` truncates.
 
 Neither `$t1` nor `$t2` is ever masked to 8 bits; they run away as 32-bit
 values. Only `$t1`'s low byte reaches the XOR, but `$t2` feeds back into itself,
-so a model has to keep all 32 bits. `fxunp.descramble` does.
+so a model has to keep all 32 bits. `fxunp.descramble` does. (Ninth pass: it does
+not have to. XOR and `+ 1` only ever carry upwards, so the low three bits of the
+state - all the rotate reads - depend on nothing but the low three bits of the
+state and the key. Masking both to a byte gives the same output; keeping 32 bits
+is harmless, not necessary.)
 
 Then the payoff:
 
@@ -849,16 +868,18 @@ reports four routes differing, all of it noise:
 
 * the constant tables are reached through KSEG0 (`0x8005xxxx`) in FX and KUSEG
   (`0x001Cxxxx`) in V2, so every `lui` differs;
-* V2 inlines the shared `dst[0] = src[0] & 0xF0` tail into each route, FX
-  jumps to one copy of it;
-* the one call the routine makes sits at the top of a route in FX and at the
-  bottom in V2.
+* V2 shares one copy of the `dst[0] = src[0] & 0xF0` tail between keys 4, 5
+  and 6 (the first two `j` to the end of key 6) and inlines a second into key
+  7, where the checker call follows it; FX jumps to one copy from all four;
+* the one call the routine makes besides `strncpy` sits at the top of a route
+  in FX and at the bottom in V2.
 
 A canonicalising diff (`fxcmp.py`) shrinks this but cannot eliminate it, because
 the difference is real — it is just not a difference in *meaning*. At that point
 the honest move is to stop reading and start executing.
 
-`fwemu.py` is a MIPS I interpreter, about 120 lines: the ~30 opcodes this routine
+`fwemu.py` is a MIPS I interpreter, about 120 lines when this was written (under
+300 now, with what the engine work added): the ~30 opcodes this routine
 uses, correct branch-delay semantics via the standard `pc`/`npc` pair, and the
 four unaligned `lwl/lwr/swl/swr` — needed because that is how `" WB123"` gets
 onto the stack. Memory is two segments, the image at its own base and 1 MB of
@@ -885,7 +906,7 @@ $ uv run --with capstone python fxtest.py
 
 26,112 code/key combinations per image. The FX carts decrypt cheat codes exactly
 the way the V2 carts do — and `XP_KEYED_TYPES = 0xABFB` holds for all five, which
-is what makes the route table in `crypto.c` safe rather than lucky.
+is what makes the route table in `xp_crypto.c` safe rather than lucky.
 
 
 ### 10.4 One bug worth keeping
@@ -905,9 +926,12 @@ The firmware gets this right, and it is worth seeing how:
 ```
 
 `sltiu` is unsigned, so `-4` is `0xFFFFFFFC`, comfortably `>= 0xF4`, and every
-first byte below `0x0C` takes the default route through the *same* bounds check
-that catches the top end. One comparison, both ends. A signed compare there would
-have been a jump through a table entry at a negative offset.
+first byte that masks to below 4 - `0x00`-`0x03`, and `0x08`-`0x0B` with bit 3
+cleared - takes the default route through the *same* bounds check that catches
+the top end. One comparison, both ends. A signed compare there would have been a
+jump through a table entry at a negative offset. (`0x04`-`0x07` and `0x0C`-`0x0F`
+are in range: they are type 0 codes with keys 4-7 and go through the table like
+any other.)
 
 
 ### 10.5 Asking the binary where its data lives
@@ -926,10 +950,11 @@ english.dec  0x00000 0x40000 0x60000 0x7F000 0x80000
 v452d.rom    0x00000 0x3F000 0x40000 0x60000 0x7F000 0x80000
 ```
 
-V2 names `0x22000`/`0x23000` — exactly where `db2.py` finds its database, plus a
-second executable module it `jalr`s into. FX names `0x7F000` and `0x80000`, and
-**both are past the end of the dump files** (`0x4D4CF` and `0x60000`). Reading
-the code there:
+V2 names `0x23000`, the database header (`*(ROM + 0x7C)`), and `0x25000`, where
+`db2.py`'s record chain begins, plus `0x22000`, a second executable module it
+`jalr`s into. (`0x60000` in every image is the cartridge control port at
+`0x1F060000`, not flash.) FX names `0x7F000` and `0x80000`, and **both are past
+the end of the dump files** (`0x4D4CF` and `0x60000`). Reading the code there:
 
 ```
 8003BEEC  lui   $v1, 0x1f07 ; ori $v1, 0xfff8    ; descriptor at 0x1F07FFF8
@@ -945,8 +970,34 @@ address zero times. So the missing databases were never encrypted, compressed or
 cleverly encoded. **The dumps are simply short.** No further reverse engineering
 of these two files can produce them.
 
+> **Superseded (ninth pass).** Every sentence of that conclusion is wrong. The FX
+> databases are in the dumps, and they *are* compressed. The version header the
+> self-destruct reads, `*(ROM + 0x7C)` = `0x9F001500`, holds at `+0xB8` a pointer
+> to a container just past the scrambled firmware - `0x9F044400` in `english.dec`.
+> It is an 8-byte header (packed size, unpacked size, little-endian) and then
+> 14-bit LZW codes, MSB first, the dictionary starting at 256, `0x3FFF` for the end
+> and no clear code. The firmware's own decompressor is `0x80025E80` in
+> `english.dec`. Decoded, it gives exactly the declared size - `0xCC34` bytes for
+> 3.20, `0xDE5F` for 4.50, `0xCC06` for both 4.52 builds - and a record chain that
+> starts `"A-Train"` and ends `FF FF FF FF`. The packed sizes end exactly at the end
+> of the three `.fcd` images; in `v452d.rom` the container ends at `0x493A5`.
+>
+> What `0x1F07FFF8` is: free flash above that database, behind a bank switch. The
+> FX flash accessors (`0x8001EF3C` in `v452d.rom`) treat `0x1F000000`-`0x1F07FFFF`
+> as a flat 512 KB, and reach offsets from `0x60000` up through the
+> `0x1F040000`-`0x1F05FFFF` window after writing `0x21` to `0x1F060001`. So the
+> CPU never puts `0x1F07FFF8` on the bus, and "past the end of the dump" is true
+> only of that flat address. The formula's "firmware_end" is the container
+> pointer, and its `n` is the packed size.
+>
+> The page scan missed it because the firmware never builds the container's
+> address with a `lui`: it reads it out of a pointer slot in data. That breaks
+> the checklist rule below as stated, and it is the §2 mistake one level up - a
+> claim about a search, written down as a claim about the file.
+
 Knowing *why* a search fails is worth as much as the search succeeding, and it
-costs one scan over the `lui` immediates.
+costs one scan over the `lui` immediates - provided the scan can see the thing.
+This one could not.
 
 
 ### 10.6 Nine firmwares, and a base address that lied
@@ -970,8 +1021,9 @@ Getting there meant dropping two file-name tables and detecting everything from
 the bytes. The load address is the interesting half. The obvious approach —
 every `lui`/`addiu` pair that names one of the three constant tables votes for a
 base, best score wins — works on eight of the nine and quietly picks a base
-`0x1000` too low on the German V2, because that image carries **two** sets of
-table references and the vote ties.
+`0x1000` too low on the German V2, because that image carries what look like
+**two** sets of table references, and the vote ties. (Only one set is real; see
+the ninth-pass note at the end of this section.)
 
 The symptom was worth reading properly: the jump table said the default route
 was at `0x1AC2B4`, but the dispatcher branched to `0x1AB2B4`. When two things
@@ -993,8 +1045,10 @@ swallowed unrelated functions and found 17 call targets instead of 2. (Ninth pas
 not so. Read at the right base, the German routes follow the dispatcher directly,
 exactly as in 2.008. The 0x1000 came from the wrong base, and the "second set" of
 table references is `lui`/`addiu` pairs naming `"Here1!!"`-style debug strings that
-happen to sit 0x1000 below the tables.) A routine reached
-through a jump table has no contiguous extent to find. Classifying each callee at
+happen to sit 0x1000 below the tables - `0x1BEB84`, `0x1BEB8C`, `0x1BEB94` against
+`0x1BFB84`, `0x1BFB8C`, `0x1BFB94`. In `xtger.dec` the routine runs from `0x1ABF98`
+to its first `jr $ra` at `0x1AC41C`, routes included.) A routine reached through a
+jump table has no contiguous extent to find. Classifying each callee at
 the moment control actually reaches it needs no extent at all — and it prints
 what it stubbed, so the assumption stays checkable.
 
@@ -1014,10 +1068,13 @@ what it stubbed, so the assumption stays checkable.
   receive the buffer" is an argument; an empty implementation in a sibling
   firmware, plus a known-plaintext check, is evidence.
 * To find where a firmware keeps something, collect every address it builds with
-  `lui` and bucket them into pages. Code cannot reach data without naming it.
+  `lui` and bucket them into pages. Code cannot reach data without naming it -
+  but it can name it through a pointer stored in other data, which no `lui` scan
+  sees. The FX database is reached that way (§10.5); follow the pointer slots too.
 * "Not found" is a claim about your search, not about the file. Turn it into a
   claim about the file — here, that the address the firmware uses lies past the
-  end of the dump — or say plainly that you do not know.
+  end of the dump — or say plainly that you do not know. (§10.5 did the first and
+  was wrong: the address it found was not the one the codes live at.)
 * Derive a load address from an identity that must hold, not from a vote between
   candidates. A tie you never notice is worse than no answer.
 * When two values that must agree differ by a round number, suspect the frame.
@@ -1043,10 +1100,10 @@ the nastiest thing in the ROM.
 001A4644  8E51007C  lw    $s1, 0x7c($s2)     ; s1 = *(u32*)(ROM + 0x7C) = 0x1F023000
 001A4648  3C04001D  lui   $a0, 0x1d          ; \  a0 = 0x1CB8EC
 001A464C  2484B8EC  addiu $a0, $a0, -0x4714  ; /
-001A4650  0C069104  jal   0x1a4410           ; v0 = strlen(a0)
-001A4658  2442FFFF  addiu $v0, $v0, -1       ; 14 - 1 = 13
+001A4650  0C069104  jal   0x1a4410           ; v0 = strlen(a0) + 1 - it counts the NUL
+001A4658  2442FFFF  addiu $v0, $v0, -1       ; 15 - 1 = 14
 001A465C  0202102B  sltu  $v0, $s0, $v0
-001A4660  1040000F  beqz  $v0, 0x1a46a0      ; i >= 13 -> done, no complaint
+001A4660  1040000F  beqz  $v0, 0x1a46a0      ; i >= 14 -> done, no complaint
 001A4668  3C01001D  lui   $at, 0x1d          ; \
 001A466C  00300821  addu  $at, $at, $s0      ;  | v0 = masked[i]
 001A4670  9022B8EC  lbu   $v0, -0x4714($at)  ; /
@@ -1073,6 +1130,12 @@ b'(C) 1997/8 FCD'
 
 And `*(u32*)0x1F00007C` is `0x1F023000` — the header of the cheat database, the
 one `db2.py` walks past to reach the game names.
+
+All 14 characters are compared, not 13. This note used to read the `- 1` as
+"stop one short of the string", which is what it would mean after a real
+`strlen`. But `0x1A4410` starts its count at 1 and counts the terminator too, so
+the `- 1` only takes that back. Executed: on `xteng.dec`, changing header byte 13
+sets it off, and byte 14 does not.
 
 
 ### 11.2 What `0x1A35E4` does
@@ -1103,35 +1166,47 @@ flash_write(const u8 *src /*s4*/, u8 *dst /*s5*/, u32 len /*s7*/)
 
 The cart uses it legitimately elsewhere — `flash_write(buf, 0x1F022600, 0x10)`
 saves settings. Pointed at `(0x3E8, 0x1F000000, 0x18000)` it programs 96 KB over
-the boot stub and the packed firmware, sourced from `0x3E8`: PSX kernel RAM, not
-a staged image. `s4` really is a source pointer, not a count — it is dereferenced
-two instructions into the loop.
+the boot stub and the packed firmware, sourced from `0x3E8`: low PSX RAM, not a
+staged image - kernel RAM up to `0xFFFF`, then on into user RAM to `0x183E7`,
+which on an FX cart is the running firmware itself (loaded at `0x80010000`). `s4`
+really is a source pointer, not a count — it is dereferenced two instructions
+into the loop.
 
 
 ### 11.3 When it fires
 
-Not on every decrypt. Each generation wires the check into exactly *one* route,
-which you can measure by clearing the stub cache between calls and seeing which
-first bytes reach it:
+Not on every decrypt. Each generation wires the check into one key - key 7 on
+V2, plus the Special32 route, and key 4 on FX - which you can measure by
+clearing the stub cache between calls and seeing which first bytes reach it.
+(This used to say "exactly one route", against its own table.)
 
 | firmware | fires while decrypting |
 |---|---|
-| Xploder V2 2.004, Xplorer 2.008 / 2.0081 / 2.14 | a **key-7** code, or `32`/`82` (Special32) |
+| Xploder V2 2.004, Xplorer 2.005 / 2.008 / 2.0081 / 2.14 | a **key-7** code, or `32`/`82` (Special32) |
 | Xplorer FX 3.20 / 4.50 / 4.52 | a **key-4** code |
-| Xplorer Pro 2.20 | never — compiled out |
+| Xplorer Pro 2.20 | never — the callee is emptied to `jr $ra; nop`, the two calls to it remain |
 
 Never on a payload row, never on an unencrypted code. A check that ran on every
 code would be easy to notice and easy to correlate with the damage; one that runs
 on a single key is not.
 
+One build does not need the header touched. Pro 2.14 compares
+`"(C) 1997/8 FCD"` against its own header, which already reads
+`"(C) 1997-9 FCD  "`, and mismatches at index 8. So on a stock 2.14 cart the first
+key-7 or Special32 code a user activates - typed in or uploaded - programs the
+96 KB. Nothing it ships does that: the decrypt runs over the cheats a user turns
+on, and all 1,826 rows of its own database carry key nibble 0, so every one takes
+the copy route. `selfdestruct.py` executes it.
+
 
 ### 11.4 The FX version is harder on purpose
 
-`0x80024BE8` makes no calls at all and contains no obvious compare loop, which is
+`0x80024BE8` makes no direct calls and contains no obvious compare loop, which is
 why it reads as a table-builder at a glance. It:
 
 * stages the masked string (`"(C) 1997-9 FCD  "`, XOR `0xEB`) onto the stack with
-  `lwl`/`lwr` instead of reading it in place, together with a function pointer;
+  `lwl`/`lwr` instead of reading it in place, together with two code pointers,
+  `0x80017384` and `0x8001EDBE`;
 * walks an index list stored right after the string — `0, 1, 2, 12, 11, 13, -1`,
   i.e. `"(C)"` and `"FCD"`, deliberately out of order — so no contiguous compare
   over a string ever appears;
@@ -1146,19 +1221,24 @@ why it reads as a table-builder at a glance. It:
 80024CF0  240403E8  addiu $a0, $zero, 0x3e8  ; (delay slot) src = 0x3E8 again
 80024CF4  8FA20024  lw    $v0, 0x24($sp)     ; staged pointer 0x8001EDBE
 80024CFC  24420066  addiu $v0, $v0, 0x66     ; -> 0x8001EE24
-80024D00  0040F809  jalr  $v0                ; nothing cross-references this
+80024D00  0040F809  jalr  $v0                ; no xref names the target
 ```
 
 `0x8001EE24` masks its destination with `0x7FF80` and programs the same `0x18000`
 bytes from the same `0x3E8`. The staged base `0x8001EDBE` is not a function start
-and is not even word-aligned — it only becomes one after the `+ 0x66`.
+and is not even word-aligned — it only becomes one after the `+ 0x66`. (A
+decompiler that propagates constants - Ghidra's does - resolves the call anyway;
+it is a plain `xref` that comes up empty.) The destination it is handed is `6`,
+which the mask turns into `0`.
 
 `fxprot.py` finds the string, the mask and the index list in any of the nine ROMs.
 
 Not executed, for obvious reasons: this is a static reading. It is a
 well-supported one — the argument registers, the dereference of `s4`, and the
 legitimate `flash_write(buf, 0x1F022600, 0x10)` call site all corroborate — but I
-have not watched a cartridge destroy itself.
+have not watched a cartridge destroy itself. (Since then `selfdestruct.py` has
+executed it under an emulator with the flash modelled, on all ten images, and the
+ninth pass did it again under unicorn. Still no cartridge.)
 
 
 ### 11.5 What this adds to the checklist

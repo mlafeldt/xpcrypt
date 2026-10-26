@@ -1,7 +1,12 @@
 # A general module split for `xpcrypt`
 
-> Implemented on 2026-08-01. References to `xpcrypt.c` line numbers below
-> describe the pre-split baseline used to choose the seams.
+> Implemented on 2026-08-01 on the `module-split` branch (`fed8a70`, forked from
+> `854c1e1`), which is **not merged** into `main` or `research`. Here `xpcrypt.c`
+> is still the monolith beside `xp_crypto.c`/`xp_crypto.h`. That branch renames
+> those two to `crypto.c`/`crypto.h`, which is the naming this note uses. It also
+> predates the empty-game fix (`7070614`): its `db.c` still rejects a zero-cheat
+> game, so it needs that fix ported before it can merge. References to `xpcrypt.c`
+> line numbers below describe the pre-split baseline used to choose the seams.
 
 ## Decision
 

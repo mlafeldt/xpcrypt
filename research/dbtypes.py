@@ -94,7 +94,9 @@ def databases():
 # Makefile only prints this table, and a printed table nobody compares against
 # is not a check - so the totals are a condition of exit status 0.  Types 2, A
 # and E are shipped by none of the five recovered chains; that zero is a result,
-# not a placeholder, and moving it would be news.
+# not a placeholder, and moving it would be news.  These are *stored* types.  The
+# console sees others: staging turns every odd-address type 3 or 8 into an E and
+# every C0 and unhoisted D0 into a 7 (ENGINE.md 13), which this does not model.
 EXPECT_TOTALS = [1, 134, 0, 2988, 6, 44, 11, 589,
                  10689, 43, 0, 159, 27, 3, 0, 245]
 

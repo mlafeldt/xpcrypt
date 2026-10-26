@@ -2,10 +2,13 @@
 """The default-off bit in Xplorer Pro 2.20, and where else those codes appear.
 
 ENGINE.md 7 and FINDINGS.md 7 rest on four counts from this database: how many
-rows carry the bit, how many keep it through decryption, how many then reach the
-wrong address, and how many of those codes also ship in another database without
-the bit. The first three are simple predicates. The fourth is a *matching* claim,
-and the number it produces depends entirely on the rule, so the rule is here:
+rows carry the bit after decryption, how many of those are stored with no key
+bits, how many then reach the wrong address, and how many of those codes also
+ship in another database without the bit. All 133 rows that carry it keep it
+through decryption: 121 because they are stored with key bits 0, so the copy
+route keeps byte 0, and 12 because they are type C, which has no route at all.
+The first three are simple predicates. The fourth is a *matching* claim, and the
+number it produces depends entirely on the rule, so the rule is here:
 
   a flagged Pro 2.20 row matches if the same six bytes, with bit 3 of byte 0
   cleared, occur as a dispatched code row in one of the other four recovered
@@ -47,32 +50,64 @@ ADDRESSED = (0x3, 0x7, 0x8)
 
 
 def code_rows(path):
-    """(dispatched code rows, how many rows are *stored* with key bits).
+    """(dispatched code rows, how many rows are *stored* with key bits,
+    the stored first byte of each dispatched row).
 
-    Payload rows are not dispatched and are left out of the first. The second
-    reads the stored bytes, not the decrypted ones - after decryption the key
-    bits are gone, and what is left set belongs to the types with no route.
+    Payload rows are not dispatched and are left out of the first and the
+    third. The second reads the stored bytes, not the decrypted ones - after
+    decryption the key bits are gone, and what is left set belongs to the types
+    with no route.
     """
     _, db = db2.find_db(open(path, 'rb').read())
     if db is None:
-        return [], 0
-    out, keyed = [], 0
+        return [], 0, []
+    out, keyed, stored = [], 0, []
     for _, _, lines in db:
-        out += [bytes(c) for _, c, role in dbtypes.walk(lines) if role == 'code']
+        for i, c, role in dbtypes.walk(lines):
+            if role == 'code':
+                out.append(bytes(c))
+                stored.append(lines[i][0])
         keyed += sum(1 for l in lines if l[0] & 7)
-    return out, keyed
+    return out, keyed, stored
+
+
+def nibble(b):
+    """What a dispatched row's stored low nibble says: key bits and off bit."""
+    k, off = b & 7, b & FLAG
+    name = {0: 'clear', 4: 'key 4', 6: 'key 6'}.get(k)
+    if name is None or (off and k == 4):
+        return 'other'
+    return name + (' + off' if off else '')
+
+
+# ENGINE.md 7's table of stored key nibbles, per database, over dispatched code
+# rows.  It is what shows that Pro 2.20 is the first database to set the off bit
+# on rows with no key - and that Pro 2.14 before it was already in the clear.
+# "other" is everything that is neither clear nor key 4/6: 2.0081's F2 (key 2)
+# line, its key 5 Megacode header and a CD; Pro 2.20's twelve CD lines; the USA
+# database's 31001643 (key 1) and four CD.
+EXPECT_NIBBLES = {
+    'xteng.dec':   {'key 6': 2767, 'key 6 + off': 121},
+    'xtger.dec':   {'key 6': 2371, 'key 6 + off': 66, 'other': 3},
+    'xtjpro.dec':  {'clear': 1826},
+    'xtepro.dec':  {'clear': 2693, 'key 6': 84, 'clear + off': 121, 'other': 12},
+    'Xploder V2 (USA) r2.004 1998-11-13 [!].rom':
+                   {'key 6': 4007, 'key 4': 552, 'key 6 + off': 311, 'other': 5},
+}
 
 
 def main():
-    rows, stored_keyed = {}, {}
+    rows, stored_keyed, nibbles = {}, {}, {}
     for fn, label in dbtypes.ROMS:
         p = os.path.join('roms', fn)
         if not os.path.exists(p):
             print('skipped: no roms/%s' % fn)
             return 0
-        rows[fn], stored_keyed[fn] = code_rows(p)
-        print('%-22s %5d code rows, %5d stored with key bits'
-              % (label, len(rows[fn]), stored_keyed[fn]))
+        rows[fn], stored_keyed[fn], stored = code_rows(p)
+        nibbles[fn] = dict(collections.Counter(nibble(b) for b in stored))
+        print('%-22s %5d code rows, %5d stored with key bits;  stored nibbles %s'
+              % (label, len(rows[fn]), stored_keyed[fn],
+                 ', '.join('%s %d' % kv for kv in sorted(nibbles[fn].items()))))
     print()
 
     pro = rows[PRO220]
@@ -103,6 +138,8 @@ def main():
                 got['also shipped, ' + label] = len(hit)
 
     bad = [k for k in EXPECT if got[k] != EXPECT[k]]
+    bad += ['stored nibbles of %s' % fn for fn in EXPECT_NIBBLES
+            if nibbles[fn] != EXPECT_NIBBLES[fn]]
     if bad:
         print('\n%s differ from the published count - not a pass'
               % ', '.join(sorted(bad)))

@@ -12,10 +12,11 @@ little-endian at the address it actually runs from, and asserts what it finds.
     uv run --with capstone python payloads.py          # census + checks
     uv run --with capstone python payloads.py -v       # ... and every listing
 
-Corpus: the five in-ROM chains `db2.find_db()` recovers, plus the tenth image
-`pc/ROMS/Xteng.fcd` (Xplorer UK 2.005), which `db2.find_db()` rejects over a
-game record with a cheat count of zero - see `TENTH.md` and `rom2005.py`.  The
-walker below tolerates that one byte and is otherwise `db2.parse_db()`.
+Corpus: the five in-ROM chains `db2.find_db()` recovers from `roms/`, plus the
+tenth image `pc/ROMS/Xteng.fcd` (Xplorer UK 2.005), whose chain holds the one
+empty game record of the in-ROM corpus - `db2` skips it now, see `TENTH.md` and
+`rom2005.py`.  Not yet in it: the four FX databases, which ship LZW-packed and
+which `fxdb.py` decodes.
 
 The five results this file exists to pin down:
 
@@ -78,33 +79,6 @@ def expand(name):
 
 # --------------------------------------------------------------- the databases
 
-def records(rom, start):
-    """`db2.parse_db()`, but a game record may declare zero cheats.
-
-    Only the 2.005 image needs that: `Moto Racer 2` is an empty placeholder, and
-    rejecting it is why `db2.find_db()` finds no database in that image at all.
-    """
-    pos, out = start, []
-    while True:
-        if rom[pos:pos + 4] == b'\xff\xff\xff\xff':
-            return out
-        end = db2.cstr_end(rom, pos, 127)
-        if end < 0 or not db2.ok_name(rom, pos, end):
-            raise ValueError('game name at %#x' % pos)
-        game, pos = rom[pos:end].decode('latin-1'), end + 1
-        ncheats, pos = rom[pos], pos + 1
-        for _ in range(ncheats):
-            end = db2.cstr_end(rom, pos, 255)
-            if end < 0 or not db2.ok_name(rom, pos, end):
-                raise ValueError('cheat name at %#x' % pos)
-            name, pos = rom[pos:end].decode('latin-1'), end + 1
-            n, pos = rom[pos], pos + 1
-            out.append((game, name,
-                        [bytes(rom[pos + 6 * i:pos + 6 * i + 6])
-                         for i in range(n)]))
-            pos += n * 6
-
-
 def databases():
     """(label, [(game, cheat, [row, ...]), ...]) for every database we can read."""
     for fn, label in dbtypes.ROMS:
@@ -116,8 +90,8 @@ def databases():
         if db is not None:
             yield label, db
     if os.path.exists(TENTH):
-        rom = fcdcrypt.decrypt(open(TENTH, 'rb').read())
-        yield 'Xplorer 2.005 UK', records(rom, 0x25000)
+        _, db = db2.find_db(bytes(fcdcrypt.decrypt(open(TENTH, 'rb').read())))
+        yield 'Xplorer 2.005 UK', db
 
 
 # ------------------------------------------------------------------ the blocks

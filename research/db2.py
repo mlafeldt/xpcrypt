@@ -48,6 +48,34 @@ def parse_db(rom, start):
             pos += nlines * 6
     raise ValueError("ran off the end")
 
+def game_records(rom, start):
+    """[(offset, name, cheat count), ...] for every game record of the chain.
+
+    parse_db() flattens the chain to its cheats, which loses two things: a game
+    record with no cheats, and the difference between records and names.  The
+    USA database has 252 records under 250 names (`Bio Freaks` and `Casper`
+    twice), and every "games" figure counted with len(set(...)) is the second.
+    This walks the same framing and keeps the records, empty ones included."""
+    pos, out = start, []
+    while pos + 4 <= len(rom):
+        if rom[pos:pos+4] == b'\xff\xff\xff\xff':
+            return out
+        end = cstr_end(rom, pos, 127)
+        if end < 0 or not ok_name(rom, pos, end):
+            raise ValueError(f"game name at {pos:#x}")
+        game, at = rom[pos:end].decode('latin-1'), pos
+        pos = end + 1
+        ncheats = rom[pos]; pos += 1
+        out.append((at, game, ncheats))
+        for _ in range(ncheats):
+            end = cstr_end(rom, pos, 255)
+            if end < 0 or not ok_name(rom, pos, end):
+                raise ValueError(f"cheat name at {pos:#x}")
+            pos = end + 1
+            nlines = rom[pos]; pos += 1
+            pos += nlines * 6
+    raise ValueError("ran off the end")
+
 def find_db(rom):
     """Locate the complete record chain after its erased-flash boundary.
 
@@ -79,5 +107,9 @@ if __name__ == '__main__':
         start, db = find_db(rom)
         if db is None:
             print(f"{path}: no database"); continue
-        print(f"{path}: db at {start:#x} games={len(set(g for g,_,_ in db))} "
+        recs = game_records(rom, start)
+        empty = sum(1 for _, _, n in recs if n == 0)
+        print(f"{path}: db at {start:#x} game records={len(recs)} "
+              f"({len(set(g for g,_,_ in db))} names"
+              f"{f', {empty} empty' if empty else ''}) "
               f"cheats={len(db)} lines={sum(len(c[2]) for c in db)}")

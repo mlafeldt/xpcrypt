@@ -13,37 +13,44 @@ the list it measures.
 V2 (0x1A4620 in xteng), at the tail of the key-7 and Special32 routes:
 
     sig = *(u32 *)(ROM + 0x7C)              // -> 0x1F023000, the database header
-    for (i = 0; i < strlen(masked) - 1; i++)
-        if (~masked[i] != sig[i])
+    for (i = 0; i < len0(masked) - 1; i++)  // len0 (0x1A4410) counts the NUL,
+        if (~masked[i] != sig[i])           // so all 14 characters are checked
             flash_write(0x3E8, 0x1F000000, 0x18000);
 
 FX (0x80024BE8 in english.dec) does the same thing, harder to spot:
 
     * the masked string is staged onto the stack with lwl/lwr rather than read
-      in place, together with a function pointer;
+      in place, together with two code pointers;
     * only six characters are compared - positions 0, 1, 2, 12, 11, 13, i.e.
       "(C)" and "FCD" - driven by an index list stored after the string and
       walked out of order, so no contiguous compare loop appears;
-    * the punisher is reached indirectly through that staged pointer plus 0x66,
-      so the call site cross-references nothing.
+    * the punisher is reached indirectly through one of those pointers plus
+      0x66, so no xref names it (a decompiler that propagates constants still
+      resolves the call).
 
 `flash_write(src, dst, len)` is the cart's own flash programmer, the same one
 that saves settings elsewhere (`flash_write(buf, 0x1F022600, 0x10)`): JEDEC
 unlock - 0xAA to 0x5555, 0x55 to 0x2AAA, 0xA0 - then a page at a time, skipping
 bytes that already match.  Both generations aim it at the first 0x18000 bytes of
-the cartridge and source it from 0x3E8, which is PSX kernel RAM, not a staged
-image - what is there at that moment is unknown, and nothing in the ROM puts a
-firmware copy there.  Strip FCD's copyright from the database and the cart
-programs 96 KB of it over its own boot stub and packed firmware.
+the cartridge and source it from 0x3E8 - low PSX RAM, not a staged image: kernel
+RAM up to 0xFFFF, then user RAM to 0x183E7, which on an FX cart is the first
+0x83E8 bytes of the running firmware itself.  Nothing in the ROM stages a copy
+there.  Strip FCD's copyright from the database header and the cart programs
+those 96 KB over its own boot stub and packed firmware, the next time a code
+takes the route that calls the check.
 
 The string never shows up in a `strings` dump: the V2 builds store it bitwise
-NOTed, the FX builds XOR it with 0xEB.  (The plaintext banner every ROM also
-carries - "(C) 1998 Future Console Design Ltd." - is what the menu prints, and
-is not what the checker reads.)
+NOTed, the FX builds XOR it with 0xEB.  (The plaintext banner every firmware
+image also carries - "(C) 1998 Future Console Design Ltd." in V2, "1998/9" in Pro
+2.20, "(C) 1997-99 Future Console Design LTD." in FX - is what the menu prints,
+and is not what the checker reads.)
 
-Curiously the check is absent from Xplorer Pro 2.20: the callee is `jr $ra; nop`
-and the masked string is not in the image at all.  It is back in every later
-build.
+Curiously the check is absent from Xplorer Pro 2.20: the callee is emptied to
+`jr $ra; nop`, its two calls remain, and the masked string is not in the image
+at all.  It is back in every later build.  The Pro build before it, 2.14, still
+compares "(C) 1997/8 FCD" against a header that already reads "(C) 1997-9 FCD",
+so it fires on an unmodified cartridge the first time a key-7 or Special32 code
+is activated - see selfdestruct.py.
 """
 import glob
 import sys

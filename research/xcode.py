@@ -15,13 +15,18 @@ to be the missing half.
 the four binaries come from.
 
 No routine here is found by its constants. They are found by *running* every
-function in the binary: take every direct call target, run it under a 32-bit x86
-emulator with six bytes of input, and ask whether what comes out is one of the
-sixteen transforms `romcrypt.py` describes. A function that is the cipher answers
-on the first probe and then has to keep answering over a hundred more random
-inputs; everything else faults, loops, or writes something that is not any of
-them. `CONV` is the list of ways to hand a routine its arguments, and which one a
-routine wants is discovered the same way rather than asserted.
+candidate entry in the binary: every place an `E8` byte's rel32 lands inside
+its own segment, which is every direct call target plus whatever data happens
+to look like one. Each runs under a 32-bit x86 emulator with six bytes of input,
+and is asked whether what comes out is one of the sixteen transforms
+`romcrypt.py` describes. A candidate is not a function: some are false positives
+that fault, and code reached only through a pointer is no candidate at all
+(XLink's code-list walker at 0x29550 has no direct caller). A function that is
+the cipher answers on the first probe and then has to keep answering over a
+hundred more random inputs; everything else faults, loops, or writes something
+that is not any of them. `CONV` is the list of ways to hand a routine its
+arguments, and which one a routine wants is discovered the same way rather than
+asserted.
 
 The point of doing it that way: a search for `0x76`, `0xEF` and `0x73` finds the
 DOS tool's key 7 and would have walked straight past X-Killer's, which computes
@@ -30,8 +35,8 @@ reason to expect two spellings until both were in front of us.
 
 `check_constants()` does run a constant sweep, but only as a second opinion on
 the *negative* result - "no code cipher in `Xlink95.exe`" means each of its 1,491
-functions was executed and none answered, and separately that the constants one
-would need are not in its code at all.
+call-target candidates was executed and none answered, and separately that the
+constants one would need are not in its code at all.
 
 Two things the emulator cannot settle, so they are measured separately:
 
@@ -191,8 +196,9 @@ def apply_le_fixups(raw, objs):
     by searching for its offset within its object. The code cipher is not
     self-contained: the DOS tool's dispatch is an indirect jump through a table
     whose entries are all fixups, and its key 4, 5 and 7 seeds are reached
-    through pointers that are fixups too. Unfixed, the routine jumps to the
-    start of the code object.
+    through pointers that are fixups too. Unfixed, each table entry holds only
+    its target's offset within the code object (0x197EA ... 0x19992 on disk), so
+    the dispatch lands 0x10000 below the method it means, in unrelated code.
     """
     le = struct.unpack_from('<I', raw, 0x3C)[0]
     g = lambda o: struct.unpack_from('<I', raw, le + o)[0]
@@ -313,9 +319,9 @@ class Machine:
     """One mapped image, reused across every probe.
 
     The image is mapped read-only. That is not only tidiness: we are about to
-    run thousands of functions that were never meant to be entered this way, and
-    a stray store into a global would otherwise change what the next probe sees.
-    Read-only turns that into a fault, which is a result we can discard.
+    run thousands of candidate entries that were never meant to be entered this
+    way, and a stray store into a global would otherwise change what the next
+    probe sees. Read-only turns that into a fault, a result we can discard.
     """
 
     def __init__(self, segs):
@@ -352,7 +358,7 @@ class Machine:
         # writing the registers back does not clear - after one of those, every
         # later probe faults at its first instruction and the binary reads as
         # having no cipher in it. Restoring the context is what makes a sweep of
-        # thousands of functions mean anything.
+        # thousands of candidates mean anything.
         self.uc.context_restore(self.clean)
         self.uc.mem_write(SRC, bytes(src))
         self.uc.mem_write(DST, bytes([fill]) * CODE_LEN)
@@ -437,7 +443,7 @@ def identify(mach, entry, conv, sel, first, rounds=128):
 
 
 def functions(segs):
-    """Every direct call target, plus the segment starts, as candidate entries."""
+    """Every direct call target, as candidate entries - see the docstring."""
     targets = set(call_targets(segs))
     return sorted(targets)
 
@@ -706,7 +712,7 @@ def main(argv):
         if report:
             sys.stderr.write('\r' + ' ' * 44 + '\r')
         probed += nfun
-        print('%s: %s, %d segments, %d functions probed, %d routines'
+        print('%s: %s, %d segments, %d call targets probed, %d routines'
               % (path, kind, len(segs), nfun, len(hits)))
         print('  constants: %s' % check_constants(segs, executable_bases(path)))
         for entry, conv, sels, (name, way), b0 in hits:
@@ -727,7 +733,7 @@ def main(argv):
         if name in EXPECTED:
             assert sorted(got) == sorted(EXPECTED[name]), (name, got)
     total = sum(len(v) for v in found.values())
-    print('%d routines in %d binaries out of %d functions probed; every one '
+    print('%d routines in %d binaries out of %d call targets probed; every one '
           'agrees with romcrypt.py over 128 codes' % (total, len(found), probed))
     return 0
 

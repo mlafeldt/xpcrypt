@@ -44,7 +44,7 @@ def swap(b):
 
 def hx(b): return b[:4].hex().upper()+' '+b[4:].hex().upper()
 
-matched = swapped_ok = plain_ok = 0
+matched = swapped_ok = plain_ok = rows_ok = 0
 for g, n, dec, rows, pkey, size, mega in blocks(enc):
     if pkey != 6: continue
     cands = clear_blocks.get((key(g,n)[0], size, mega), [])
@@ -57,6 +57,7 @@ for g, n, dec, rows, pkey, size, mega in blocks(enc):
             hit = "SWAPPED" if dec_swap == crows else "NOT swapped"
             swapped_ok += dec_swap == crows
             plain_ok += dec_plain == crows
+            rows_ok += len(rows)
             print(f"MATCH [{g} / {n}]  size={size:#x} rows={len(rows)}  -> payload matches {hit}")
             print(f"   enc row0 {hx(rows[0])}  chunk6 {hx(dec_plain[0])}  swap {hx(dec_swap[0])}"
                   f"  clear {hx(crows[0])}")
@@ -65,6 +66,6 @@ for g, n, dec, rows, pkey, size, mega in blocks(enc):
         if cands:
             print(f"no match [{g} / {n}] size={size:#x} rows={len(rows)}; "
                   f"candidate rows {[len(c[2]) for c in cands]}")
-print(f"\nblocks cross-checked: {matched}   swapped matches: {swapped_ok}   unswapped matches: {plain_ok}")
-assert (matched, swapped_ok, plain_ok) == (16, 16, 0), \
-       (matched, swapped_ok, plain_ok)
+print(f"\nblocks cross-checked: {matched} ({rows_ok} rows)   swapped matches: {swapped_ok}   unswapped matches: {plain_ok}")
+assert (matched, rows_ok, swapped_ok, plain_ok) == (16, 141, 16, 0), \
+       (matched, rows_ok, swapped_ok, plain_ok)

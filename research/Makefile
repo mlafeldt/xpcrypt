@@ -21,6 +21,12 @@
 #   make sanitize   ... and runs clean under ASan/UBSan
 #   make fuzz       ... and on malformed ROMs too: `-x` against generated images
 #   make typecx     ENGINE.md 16's two open questions: type 2 and type C
+#   make plugin     the FCDEXE1138 memory-card upgrade loader, every image
+#   make prechain   what lies in front of the record chains
+#   make fxdb       the FX databases: LZW-packed, decoded and counted
+#   make rom2005    release 2.005, the tenth image, against the corpus
+#   make payloads   the shipped block payloads, disassembled
+#   make selfdestruct  the copyright check executed under a flash model
 #
 # The ROM images are cartridge firmware dumps and are not in the repo (see
 # research/.gitignore).  Drop them in roms/ to enable the targets that need
@@ -62,7 +68,8 @@ need_roms = @echo '  skipped: no roms/ - drop the firmware dumps in and re-run'
 endif
 
 .PHONY: all check crypto blocks oracle extract roundtrip encrypt fcd comms firmware engine \
-	tables analyses plugin prechain rom2005 payloads typecx selfdestruct strict sanitize fuzz clean
+	tables analyses plugin prechain fxdb rom2005 payloads typecx selfdestruct strict sanitize \
+	fuzz clean
 
 # Every C target builds the *same* objects and binary in the parent directory,
 # with different flags - `strict` twice over, `sanitize` with the sanitizers,
@@ -75,7 +82,7 @@ endif
 all: check
 
 check: strict sanitize fuzz oracle extract roundtrip encrypt fcd comms firmware engine \
-	tables analyses plugin prechain rom2005 payloads typecx selfdestruct
+	tables analyses plugin prechain fxdb rom2005 payloads typecx selfdestruct
 	@echo
 	@echo 'all suites passed'
 
@@ -157,7 +164,7 @@ endif
 # was written as the algebraic inverse of the firmware's decrypt, so `roundtrip`
 # above can only check it against itself. The vendor's DOS tool has a real one:
 # this finds it - and every other code cipher in the four PC binaries - by running
-# all 3,920 of their functions under an emulator, and holds the six encrypters it
+# all 3,920 call-target candidates under an emulator, and holds the six encrypters it
 # finds against `xpcrypt -e` code for code. See ENCRYPT.md.
 encrypt:
 	@echo '== the code cipher in the PC tools =='
@@ -178,8 +185,9 @@ fcd:
 
 # The X-Link parallel-port protocol, both ends: the PC's byte primitives and
 # command opcodes out of XLink.exe, the cartridge's dispatcher and jump table
-# out of every firmware, the opcodes matched across the wire, and the 512 KB
-# flash-read question.  Runs on whichever of pc/ and roms/ are present.  See
+# out of every firmware, the opcodes matched across the wire, and the read sizes
+# of the PC ends (DOS 256 KB, both Windows builds the full 512 KB into
+# ROMS\BackUp.FCD).  Runs on whichever of pc/ and roms/ are present.  See
 # comms.py's header.  Check it still bites:  make comms PYCS=false   must fail.
 comms:
 	@echo '== the X-Link comms protocol, both ends =='
@@ -197,10 +205,12 @@ endif
 
 # ------------------------------------------------------------ the engine side
 
-# The interesting one: this executes the real 0x24C-byte engine blob out of each
-# image over a fixed set of staged patch lists and compares the resulting memory
-# traces across all nine.  engineemu.py fails if the number of disagreeing cases
-# is not the expected two - type 4, which the FX builds dropped.
+# The interesting one: this executes the real engine blob out of each of the ten
+# images over a fixed set of staged patch lists and compares the resulting memory
+# traces.  engineemu.py fails if the number of disagreeing cases is not the
+# expected two - type 4, which the FX builds dropped.  It also runs each image's
+# own four staging passes over real selections, the pass-4 normaliser over a set
+# of codes, and asserts the FX-only DCIC clear on the B() entry, each on its own.
 engine:
 	@echo '== the code engine, executed =='
 	$(need_roms)
@@ -253,6 +263,18 @@ ifneq ($(ROMS),)
 	@$(P) $(PYCS) prechain.py | tail -1
 endif
 
+# Where each firmware keeps its codes.  V2: the record chain the support module
+# points at.  FX: the same pointer names an LZW-packed container, which this
+# decodes twice - with its own 14-bit decoder and by running the firmware's own
+# decompressor under fwemu.py - and requires the two to agree byte for byte
+# before it counts the records.  FINDINGS.md 6.3.
+fxdb:
+	@echo '== the FX databases, unpacked =='
+	$(need_roms)
+ifneq ($(ROMS),)
+	@$(P) $(PYCS) fxdb.py | tail -1
+endif
+
 rom2005:
 	@echo '== release 2.005, the tenth image =='
 ifeq ($(wildcard pc/ROMS/Xteng.fcd),)
@@ -276,9 +298,12 @@ endif
 
 # The anti-tamper self-destruct, executed (not read): each image's real decrypt
 # routine run under fwemu.py with the checker left LIVE and the cartridge modelled
-# as the Atmel AT29C flash part it is.  Nine of ten images program 96 KB of PSX
-# RAM over their own flash on a header mismatch; release 2.14 does it on a stock,
-# unmodified cartridge (its check string predates its own database header).
+# as the page-erasing flash parts the firmware identifies (Atmel AT29C device
+# codes, or SST via SST's alternate ID entry).  Nine of ten images program 96 KB
+# of PSX RAM over their own flash on a header mismatch; release 2.14 does it on a
+# stock, unmodified cartridge as soon as a key-7 or Special32 code is activated
+# (its check string predates its own database header).  No row of its shipped
+# database takes either route.
 selfdestruct:
 	@echo '== the self-brick, executed under a flash model =='
 	$(need_roms)

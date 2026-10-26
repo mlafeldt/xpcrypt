@@ -8,9 +8,17 @@ xpcrypt, and the recovered Xploder firmware corpus. The live endpoint returned
 a Cloudflare block to the automated fetch; the archived text identifies itself
 as last modified May 5, 2000 and contains the same technical material.
 
+The page is FCD's own. It is signed "Good Luck, Wayne", and its Resident Evil 2
+Supercode is credited "By P Herbert and Wayne Beckett, (C)1998 Future Console
+Design" - the two names in the firmware's own credits (`FINDINGS.md` §5.5). So
+where it disagrees with the recovered firmware, it is the vendor's account of
+what the format was meant to do set against what the shipped builds do, not a
+third party's misreading. It also refers to an "X-terminator cheat engine";
+what that name covers was not established.
+
 ## Verdict
 
-The page is a useful contemporary description of the **decrypted/raw Xplorer
+The page is the vendor's description of the **decrypted/raw Xplorer
 instruction set**, and most of its worked Xplorer examples agree with the
 firmware research. Compatibility has two separate layers:
 
@@ -20,8 +28,11 @@ firmware research. Compatibility has two separate layers:
   after presentation punctuation is removed.
 * **Runtime semantics:** xpcrypt does not execute cheats. The recovered cartridge
   engine in [ENGINE.md](ENGINE.md) is the authority for what a decrypted record
-  actually does. Most page descriptions match it, but types C/D, keyless
-  default-off codes, and FX type 4 behavior do not.
+  actually does - including the staging passes, which rewrite some codes
+  before the engine sees them. Most page descriptions match it. Type C matches
+  for `C0` lines, and the page's `D0` advice holds except for the one D line
+  that staging hoists into a global anchor. Keyless default-off codes and FX
+  type 4 behavior do not match.
 
 The page is therefore not an xpcrypt input specification, a crypto
 specification, or a completely reliable description of every firmware family.
@@ -38,7 +49,7 @@ The page should be used with these qualifications:
 
 | Page topic | Result against xpcrypt and the firmware | Verdict |
 |---|---|---|
-| `T = 0/8` and `8` means off by default | Bit 3 is the default-off flag; bits 0-2 are the normal cipher key. xpcrypt preserves bit 3 for round trips, while the cartridge's key 4-7 decrypt routes clear the whole low nibble. Contrary to the page's unconditional "this bit is then masked out", a keyless/default-off raw code never visits a cipher route, keeps the `8`, and the engine interprets it as address bit 27: the access moves by `0x08000000`. The page describes raw codes, not their stored encrypted form. The claim that one flag controls the rest of a cheat is menu/database behavior and is not established by xpcrypt's stream interface. | Flag definition matches; universal masking claim conflicts with the engine. |
+| `T = 0/8` and `8` means off by default | Bit 3 is the default-off flag; bits 0-2 are the normal cipher key. xpcrypt preserves bit 3 for round trips, while the cartridge's key 4-7 decrypt routes clear the whole low nibble. Contrary to the page's unconditional "this bit is then masked out", a keyless/default-off raw code never visits a cipher route and keeps the `8`. Staging's normaliser matches whole first bytes such as `80`, so it leaves `88` alone, and the engine interprets the flag as address bit 27: the access moves by `0x08000000`. The page's own example, `88123456 0001`, is exactly that case. The page describes raw codes, not their stored encrypted form. The claim that one flag controls the rest of a cheat is menu/database behavior and is not established by xpcrypt's stream interface. | Flag definition matches; universal masking claim conflicts with the engine. |
 | Type 0 | The engine performs a 32-bit store of the zero-extended 16-bit value. On little-endian PSX RAM it is equivalent to a type 8 write at `addr` and a zero type 8 write at `addr + 2`, exactly as the page says. | Match. |
 | Type 1 | All nine engines have no handler, and shipped databases use it as the canonical safe second-line carrier for type B slides. The page's conditional-specific reason is behaviorally sound: when a false condition skips the B header, the loop encounters its carrier next, and type 1 prevents an unexpected write. Without a condition, an executable type 3/8 carrier would be dispatched after the slide and merely repeat its first write, so type 1 remains the clean general form. | Match. |
 | Types 3 and 8 | Type 3 writes one byte; type 8 writes one 16-bit halfword. | Match. |
@@ -46,9 +57,9 @@ The page should be used with these qualifications:
 | Types 7 and 9 | Type 7 executes the next entry only on equality; type 9 executes it only on inequality. Each guards one entry, and the stager keeps a guard in front of a Supercode or Megacode so the block behaves as one entry. | Match. |
 | Type 5 Supercode | `5?aaaaaa Knnn`, with `nnn` payload bytes and `ceil(nnn/6)` following rows. The page's `0YYY` form is the key-0 subset. xpcrypt additionally handles payload keys 6 and 7 and treats every following row as payload data, not as a code. | Match for the clear/key-0 form shown. |
 | Type 6 Megacode | `6?aaaaaK nnnn`, followed by 10 descriptor bytes and `nnnn` logical handler bytes. The page's address, DCIC, mask, and installation-at-`0x80000040` layout matches. Its template fixes `K=0`, while xpcrypt also supports payload keys 6 and 7. The Rayman `003F` field declares 63 logical bytes; the runtime rounds that to 64 bytes/16 words, explaining the page's "exactly 64 bytes" statement. | Match for the key-0 example, with missing key and rounding details. |
-| Type B slide | The page's address step, value step, and 16-bit writes match the handler. Its even-address/even-step caution follows from halfword alignment; the handler itself loads signed steps and does not contain a separate evenness test. Canonical encrypted/raw Xplorer format has only an 8-bit repeat count: the apparent high nibble of `RRR` is actually the key/default-off nibble. All page examples (`005`, `0A6`) fit that restriction. The handler has no explicit 0x0F/0x7F firmware cap, so the page's ROM-specific maxima are empirical behavior, not a format rule confirmed by the engine. | Mostly match; `RRR` notation overstates the usable count width. |
-| Type C | The page says C acts like a D conditional. In all nine recovered firmwares, type C has no engine handler and no cipher route. The Japanese database even contains apparent type C button guards whose following writes therefore run unconditionally. **Ninth pass: the page is right.** Staging pass 4 rewrites a `C0` line into type 7 (equality guard, address forced even) before the engine sees it, so those Japanese guards work. Only `CD`/`C6`/`C8` are inert (`ENGINE.md` top). | ~~Conflict.~~ Match for `C0`. |
-| Type D | The page presents D as Datel compatibility. Actual staging promotes exactly one selected type D to type F, moves it to the head of the whole list, and uses it as a global anchor. Two or more type D lines are left unhandled. A GameShark `D0` one-line equality guard must be converted to Xplorer type 7; feeding `D0` unchanged is not equivalent. **Ninth pass:** wrong about the unhoisted ones. Every `D0` that is not hoisted (two or more, or a D beside an F) is rewritten to type 7 by staging pass 4. So `D0` *is* a type 7 guard except when it is the single selected D, which becomes the global anchor. The page's "'D0' ... interchangeable / IS compatible" holds in that wider case. | Partial match; the single-D hoist is the missing rule. |
+| Type B slide | The page's address step, value step, and 16-bit writes match the handler. Its even-step caution is enforced before the handler runs: staging pass 4 clears bit 0 of the step of every `B0` line (`xteng` `0x1A840C`), so an odd step is rounded down to even rather than faulting. The handler itself loads signed steps and has no evenness test, and an odd *start* address in the type 1 carrier is not touched by staging. Encrypted Xplorer codes have only an 8-bit repeat count: the apparent high nibble of `RRR` is the key/default-off nibble, which the key 4-7 routes clear. A raw code is different. The copy route keeps byte 0, and staging matches the whole byte `B0`, so a keyless default-off slide `B8cc…` reaches the handler with the flag in its count bits and would run `0x800 + cc` iterations. That is read from the handler's listing in `ENGINE.md`, not executed. No shipped database has one: all 159 type B lines in the five V2 databases decrypt to exactly `B0`. All page examples (`005`, `0A6`) fit the 8-bit count. The handler has no explicit 0x0F/0x7F firmware cap, so the page's ROM-specific maxima are empirical behavior, not a format rule confirmed by the engine. | Mostly match; `RRR` notation overstates the usable count width, and a raw `B8` slide is a hazard the page does not mention. |
+| Type C | The page says C acts like a D conditional, and for `C0` it is right. Type C has no engine handler and no cipher route in any of the recovered firmwares, but staging pass 4 rewrites a `C0` line into type 7 (an equality guard, with the address forced even) before the engine sees it. So the Japanese database's type C button guards do guard. Only `CD`, `C6` and `C8` lines stay type C and are inert (`ENGINE.md` top). | Match for `C0`; other C lines do nothing. |
+| Type D | The page presents D as Datel compatibility and says the GameShark/AR `D0` "IS compatible" and interchangeable. That holds with one exception. When the selection holds a single D line and no F, staging promotes it to type F, moves it to the head of the whole list, and uses it as a global anchor. In every other case - two or more D lines, or a D beside an F - pass 4 rewrites each `D0` to type 7, and it behaves as the one-line equality guard the page describes. A lone `D0` guard is the case that changes meaning, so converting a GameShark `D0` to Xplorer type 7 is still the safe form. | Partial match; the single-D hoist is the missing rule. |
 | Type F | The page's "type 7 affecting all cheats" summary is directionally right: on mismatch, F aborts the entire list for that pass. The stager hoists the first F to the front; later F lines are not all independently promoted. | Match with a first-anchor qualification. |
 | GameShark/AR type 50 slide conversion | xpcrypt does no cross-device semantic conversion. `500005B0 0002` is an Xplorer type 5 Supercode header to xpcrypt, not a GameShark slide. Encrypting that page example as Xplorer changes it to `56565C08 595C` and treats the following line as key-0 payload. | Incompatible as xpcrypt input; convert to type B first. |
 | `$` and hyphen presentation syntax | The page prints rows such as `$60000000 003F` and diagrams such as `00xxxxxx-yyyy`. xpcrypt accepts only twelve hex digits plus whitespace, so `$` or `-` makes the entire line non-code text and it is passed through unchanged. | Strip `$` and replace/remove hyphen separators before processing. |
@@ -59,7 +70,7 @@ route table, key nibble behavior, payload ciphers, and block stagers come from
 the cartridge routine and callers transcribed in
 [REVERSING.md, sections 6-7](REVERSING.md#6-the-crypto-function-annotated).
 The converter implementation follows those results in
-[crypto.c](../crypto.c) and documents its deliberate departures at the
+[xp_crypto.c](../xp_crypto.c) and documents its deliberate departures at the
 top of that file.
 
 As an independent source-code cross-check, SkillerCMP's current implementation

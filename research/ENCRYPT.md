@@ -13,7 +13,7 @@ table that encrypts all four code keys and both Supercode/Megacode payload keys 
 the direction the cartridge never had. Executed, it produces exactly what
 `xpcrypt -e` produces, byte for byte, over 3,000 codes. A third party's tool,
 `x-killer.exe`, has keys 6 and 7 in *both* directions and computes them from the
-same closed forms `crypto.c` uses rather than from the firmware's sliding
+same closed forms `xp_crypto.c` uses rather than from the firmware's sliding
 windows. Neither Windows build has a code cipher at all.
 
 `FCD.md` is about the other cipher in these same four binaries - the whole-image
@@ -43,28 +43,29 @@ index that is *not* the key nibble. Eight methods, of which six are ciphers:
 the same windows over the same three seed strings the cartridge does - `"WHBX"`
 at `0x46F04`, `"FCD!"` at `0x46F09`, `" WB123"` at `0x4B470`, each referenced
 exactly once, and each from inside this function. The cartridge keeps them at
-`0x1BF29C`, `0x1BF2A4` and `0x1BF294`. `crypto.c` carries the closed forms
+`0x1BF29C`, `0x1BF2A4` and `0x1BF294`. `xp_crypto.c` carries the closed forms
 instead, which is why its key 4 says `0x25` where both of these say
 `'W' + 0x38 + 'H' + ('B' ^ 0x12) + ('X' | 0xEE)`.
 
 **3. `x-killer.exe` is the closed forms, from a stranger, in 1999.** Four
 routines, `cdecl(src, dst)`: key 6 and key 7, encrypt and decrypt each. Its key 7
-is `crypto.c`'s expression instruction for instruction, down to writing
+is `xp_crypto.c`'s expression instruction for instruction, down to writing
 `add al, 0x0B` for the C's `-= ... + 0xF5` - the same byte, signed the other way.
 It is by Tim
-Schuerewegen, not FCD, and it sits directly after the two `.fcd` routines
-`FCD.md` found in the same binary.
+Schuerewegen, not FCD, and it sits just after the two `.fcd` routines `FCD.md`
+found in the same binary, with the tool's ROM-type classifier (`0x4083D0`) between
+them (ninth pass; this used to say "directly after").
 
-**4. The Windows builds have none.** 1,491 and 1,492 functions probed by
-execution, none of them any of the sixteen transforms; and no constant set that
-would let one exist (section 5).
+**4. The Windows builds have none.** 1,491 and 1,492 call-target candidates
+probed by execution, none of them any of the sixteen transforms; and no constant
+set that would let one exist (section 5).
 
 **5. Three implementations, three answers on byte 0** - and they agree wherever
 it matters (section 3).
 
 **6. Nothing anywhere implements Special32/33.** The `0x32`/`0x82` and
 `0x33`/`0x83` routes of `REVERSING.md` 6.7 have no encrypter in any of the four
-binaries, so the note in `crypto.c` about them stands unchanged: still no
+binaries, so the note in `xp_crypto.c` about them stands unchanged: still no
 authority, still deliberately unimplemented.
 
 
@@ -96,16 +97,16 @@ and the way it clears it is the firmware's habit rather than a compiler's:
 ```
 
 It clears **bytes 1 to 5 of the destination and not byte 0**, which is exactly
-what the cartridge's decrypt does at `0x1ABFE0`-`0x1ABFF4` in `xteng.dec`; and method 5 then returns
-without writing anything else, leaving that row of zeros - which is what the
+what the cartridge's decrypt does at `0x1ABFE0`-`0x1ABFF4` in `xteng.dec`; and
+method 5 then returns without writing anything else, leaving that row of zeros - which is what the
 cartridge does for a payload key it does not implement. Two ends of the same
 codebase.
 
 The jump table is at `0x29788`, immediately above the function, and every entry
-in it is a load-time fixup: read out of the file each entry holds only its target's
-offset within the object (`0x197EA`...`0x19992`), so unfixed the dispatch lands
-`0x10000` below the real target (ninth pass; this used to say "eight zeros"). `xcode.py` applies the
-LE fixup section for this reason - `xlink.py` deliberately does not, because the
+in it is a load-time fixup: read out of the file each entry holds only its
+target's offset within the object (`0x197EA`...`0x19992`), so unfixed the
+dispatch lands `0x10000` below the real target. `xcode.py` applies the LE fixup
+section for this reason - `xlink.py` deliberately does not, because the
 `.fcd` routines need no relocation and an unfixed image is what lets a data
 reference be found by searching for its offset within its object.
 
@@ -163,7 +164,7 @@ and key 6 is two instructions:
 ```
 000298BB  8a16             mov dl, [esi]
 000298BE  30c2             xor dl, al             ; ^ i
-000298C1  80c255           add dl, 0x55           ; crypto.c writes - 0xAB
+000298C1  80c255           add dl, 0x55           ; xp_crypto.c writes - 0xAB
 ```
 
 ### The payload routes
@@ -209,8 +210,30 @@ neighbours in `0x29000`-`0x29500` are the ones holding `"$no code"` and
 `"Game Name '%s' is too long (by %d characters)"`, which places it on the
 cheat-list side of the tool rather than the ROM-upgrade side.
 
+Three more things that function does, found in the ninth pass:
+
+* **It skips any code whose key bits are already set** (`test byte [esp+3], 7` at
+  `0x2958C`, on the code's top byte), so it never encrypts a code twice. It checks
+  the key bits, not the type.
+* **It writes the payload key into the header.** A Supercode's `K` nibble becomes
+  the structure field at `+0x30` (shifted left 12 into the value word), a
+  Megacode's low address nibble is ORed with the field at `+0x34`, and the payload
+  rows are then encrypted with that same field as the method index - so payload
+  key 6 selects method 6, key 7 method 7, and key 0 method 0, the plain copy.
+* **It sizes a Megacode one row too long in a third of the cases** - a latent
+  defect in the vendor's tool. The type 6 path (`0x295D4`) counts
+  `nnnn / 6 + 2` rows, plus one if `nnnn % 6` is not zero: `2 + ceil(nnnn / 6)`.
+  The cartridge's stager and xpcrypt both use `ceil((nnnn + 10) / 6)`, which is
+  `2 + ceil((nnnn - 2) / 6)`. The two disagree exactly when `nnnn % 6` is 1 or 2,
+  and then XLink takes the code after the block as one more payload row. With
+  payload key 0 that is harmless - method 0 copies the row, so the next code is
+  merely left unencrypted, which the cartridge reads as it is. With payload key 6
+  or 7 the next code would get the payload cipher and decrypt to garbage on the
+  cart. No database has a keyed Megacode, so nothing shipped is affected. The
+  Supercode path (`0x296C1`) uses `ceil(nnn / 6)` and agrees with the cartridge.
+
 Worth noting for what it does *not* do: neither the routine nor that caller
-checks the code's type. `crypto.c` refuses to encrypt a code whose type the
+checks the code's type. `xp_crypto.c` refuses to encrypt a code whose type the
 cartridge gives no crypto route (`XP_KEYED_TYPES`), because the cartridge would
 run the ciphertext; hand the same code to `0x297B0` and it encrypts it. Whether
 anything further up the tool filters those out is not established here - only
@@ -248,7 +271,7 @@ and key 7 is fully unrolled in the closed form:
 `0x0B` and `0xF5` are the same byte with the sign the other way, so this is
 `xp_encrypt_code()`'s key 7 exactly. Two things follow. The closed forms are not
 xpcrypt's invention - somebody outside the company had them in 1999. And the
-`^ key` on byte 0, which `crypto.c` also uses, is not the vendor's spelling of
+`^ key` on byte 0, which `xp_crypto.c` also uses, is not the vendor's spelling of
 it (section 3).
 
 X-Killer has no key 4, no key 5 and no payload cipher, which its own UI agrees
@@ -266,7 +289,7 @@ different with it:
 | cartridge, decrypting | `b & 0xF0` - drops the off-by-default bit too |
 | `XLink.exe`, encrypting | `(b & 0xF8) \| key` - masks the key bits, keeps bit 3 |
 | `x-killer.exe`, either way | `b ^ key` |
-| `crypto.c` | `b ^ key`, and refuses the input if bits 0-2 are set |
+| `xp_crypto.c` | `b ^ key`, and refuses the input if bits 0-2 are set |
 
 They agree on every input any of them will accept: a code presented for
 encryption has its key bits clear, and on those `(b & 0xF8) | k` and `b ^ k` are
@@ -292,7 +315,7 @@ and requires three things of it:
 
 ```
 8 encrypt routines are the inverse of romcrypt.py, checked on 4096 codes each
-pc/XLink.exe: LE, 2 segments, 793 functions probed, 6 routines
+pc/XLink.exe: LE, 2 segments, 793 call targets probed, 6 routines
   000297B0  key4      encrypt watcom_regs sel=1  byte 0 -> (b & 0xF8) | k
   000297B0  key5      encrypt watcom_regs sel=2  byte 0 -> (b & 0xF8) | k
   000297B0  key6      encrypt watcom_regs sel=3  byte 0 -> (b & 0xF8) | k
@@ -300,21 +323,23 @@ pc/XLink.exe: LE, 2 segments, 793 functions probed, 6 routines
   000297B0  payload6  encrypt watcom_regs sel=6  byte 0 -> ciphertext
   000297B0  payload7  encrypt watcom_regs sel=7  byte 0 -> ciphertext
   vs ../xpcrypt -e: 3000 codes, byte for byte
-pc/Xlink95-19990702.exe: PE, 4 segments, 1492 functions probed, 0 routines
-pc/Xlink95.exe: PE, 4 segments, 1491 functions probed, 0 routines
-pc/x-killer.exe: PE, 4 segments, 144 functions probed, 4 routines
+pc/Xlink95-19990702.exe: PE, 4 segments, 1492 call targets probed, 0 routines
+pc/Xlink95.exe: PE, 4 segments, 1491 call targets probed, 0 routines
+pc/x-killer.exe: PE, 4 segments, 144 call targets probed, 4 routines
   00408440  key6      decrypt cdecl_sd           byte 0 -> b ^ k
   00408470  key6      encrypt cdecl_sd           byte 0 -> b ^ k
   004084A0  key7      encrypt cdecl_sd           byte 0 -> b ^ k
   00408540  key7      decrypt cdecl_sd           byte 0 -> b ^ k
   vs ../xpcrypt -e: 1000 codes, byte for byte
-10 routines in 4 binaries out of 3920 functions probed
+10 routines in 4 binaries out of 3920 call targets probed
 ```
 
 (Each binary also prints a `constants:` line, which is section 5's business.)
 
 **Nothing above was searched for by constant.** The routines are found by taking
-every direct call target in the binary, running it with six bytes of input under
+every call-target-shaped candidate in the binary - each place an `E8` byte's
+rel32 lands inside its own segment, so direct call targets plus data that happens
+to look like one - and running it with six bytes of input under
 each of seven calling conventions, and asking whether what comes out is one of
 the sixteen transforms `romcrypt.py` describes. Which convention a routine wants,
 which key it is, which direction it goes and - for the DOS tool - which method
@@ -342,8 +367,11 @@ completely, and any sweep of this kind wants it from the beginning.
 A null result from a search is worth what the search is worth, so this one is
 made twice.
 
-**By execution:** 2,983 functions across the two builds, each tried under seven
-conventions, none of them any of the sixteen transforms.
+**By execution:** 2,983 call-target candidates across the two builds, each tried
+under seven conventions, none of them any of the sixteen transforms. A candidate is
+not a function (ninth pass; this used to say "functions"): the count includes data
+false positives and excludes code reached only through a pointer, which is why the
+constant sweep below is the half of the argument that covers everything.
 
 **By constants:** a routine can be shaped however the compiler likes, but it has
 to spell the numbers. `xcode.py` reports, per binary, the tightest window
@@ -373,7 +401,8 @@ byte index and one addition - so all it can be pinned by is a single `add` or
 in each Windows build, and disassembling all fourteen puts every one of them
 inside a longer instruction: they are the second byte of a `mov` displacement or
 similar, not instructions at all. The three in `x-killer.exe` are the two key 6
-routines and one more of the same kind.
+routines and one false positive of the same sort as the Windows ones - `04 55` at
+`0x4050AC` is the tail of `push 4` and a `push ebp` (ninth pass).
 
 What the Windows tool does instead is **not** answered here, and guessing from
 the strings is not worth much - it has a full trainer (`"%d Codes Active"`,
@@ -408,7 +437,7 @@ was already right.
   keys now have an authority that is not xpcrypt's own inverse. It is the
   vendor's, it predates every cartridge dump we have, and it agrees on 3,000
   codes including byte 0.
-* The closed forms in `crypto.c` are confirmed as *a* correct spelling rather
+* The closed forms in `xp_crypto.c` are confirmed as *a* correct spelling rather
   than the original one - the vendor's tool and the cartridge both slide windows
   over `"WHBX"`, `"FCD!"` and `" WB123"` - and X-Killer shows the closed forms
   were already in circulation in 1999.
@@ -418,6 +447,6 @@ was already right.
 Still open, and now more pointedly: **Special32 and Special33 have no encrypter
 anywhere.** Four binaries, one of them the vendor's, and not one of them
 implements the `0x32`/`0x82` and `0x33`/`0x83` routes. Every argument in
-`crypto.c`'s comment for leaving them out survives this - and the absence is
+`xp_crypto.c`'s comment for leaving them out survives this - and the absence is
 now a small piece of evidence in its own right that those two routes were dead on
 the shelf rather than in use.

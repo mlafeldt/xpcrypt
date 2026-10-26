@@ -6,7 +6,7 @@ routine that aims the cartridge's own flash programmer at the cartridge's own
 firmware, and both say the same thing about it: it is a static reading, nobody
 has watched it run.  This runs it, on all *ten* images - the nine published
 ones plus release 2.005, which ships inside the PC X-Link distribution as
-`pc/ROMS/Xteng.fcd` and has never been counted.
+`pc/ROMS/Xteng.fcd` and which the notes before TENTH.md never counted.
 
 What is executed.  The real decrypt routine out of each image, under `fwemu.py`
 - the interpreter `fxtest.py` and `engineemu.py` already use - with the checker
@@ -14,11 +14,13 @@ left *live* rather than stubbed, and with the cartridge modelled as the part it
 is rather than as a read-only blob:
 
     Flash   a JEDEC/SST page-mode NOR chip.  Writes to 0x5555 and 0x2AAA are
-            command cycles; AA/55/A0 opens a page load and AA/55/90 the
-            autoselect (chip id) window; programming can only *clear* bits, so
-            a programmed byte becomes `old & new`.  That last property is the
-            whole recoverability question, so it is modelled rather than
-            assumed.
+            command cycles; AA/55/A0 opens a page load, and AA/55/90 - or
+            SST's six-cycle AA/55/80/AA/55/60 - the autoselect (chip id)
+            window.  A page write either replaces the page (erase, then
+            program: what the parts the firmware identifies do) or can only
+            *clear* bits, so that a programmed byte becomes `old & new`.  That
+            property is the whole recoverability question, so both are
+            modelled rather than one assumed.
     Bus     2 MB of PSX main RAM, aliased into KUSEG/KSEG0/KSEG1 because both
             generations run their firmware from RAM (V2 at 0x001A0000, FX at
             0x80010000) and reach the flash through the 0x1F000000 window;
@@ -41,26 +43,36 @@ What it comes to, on all ten images:
 * The programmer really is entered as `flash_write(0x3E8, 0x1F000000, 0x18000)`
   - not read off `$a0` but off the far end: RAM is seeded with a marker
   pattern and every byte the chip is handed is `marker(0x3E8 + k)`.  It
-  programs cartridge offsets `0x000000`-`0x017FFF`, whole pages at a time, 384
-  pages of 256 bytes on the parts these carts use.  That covers the ROM header,
-  the whole boot stub, and the first 90-odd KB of the packed firmware.  On the
-  V2 layout the cheat database is behind all of it and survives untouched; on
-  the FX layout the version header the checker itself reads, at `0x1500`, is
-  inside the wiped region.
-* **Release 2.14 fires on its own untouched cartridge.**  Its compare string is
-  still `"(C) 1997/8 FCD"` while its database header had already moved on to
-  `"(C) 1997-9 FCD  "`; the compare mismatches at index 8 and 9 and the cart
-  programs 98304 bytes over itself the first time anyone decrypts a key-7 or
-  Special32 code.  Putting the two bytes `'/8'` back at cart `0x25008` stops it,
-  which is executed here too.  Pro 2.20, the very next build, is the one with
-  the check removed - and 3.20 onwards compares six characters that avoid the
-  date entirely.  That is what the missing check in 2.20 was about.
-* The damage is **not** the bit-clearing FINDINGS 6.0 assumes.  The device codes
-  the chip-id routine accepts are Atmel AT29C parts, which erase a page before
-  programming it - and the 4.52 programmer settles it by construction: it
-  re-reads each page it just wrote and programs it again until it matches, so
-  under bit-clearing semantics it never terminates.  Run it that way and it
-  reprograms page 0 for ever, which is not what a shipped product does.
+  programs cartridge offsets `0x000000`-`0x017FFF`, whole pages at a time: 384
+  pages of 256 bytes, or 768 of 128 on a 128-byte-page part.  On a V2 cart that
+  is the ROM header, the whole boot stub and the first 90-odd KB of the packed
+  firmware, and the cheat database is behind all of it and survives untouched.
+  On an FX cart it is the header, the boot stub, the version header the checker
+  itself reads at `0x1500`, the descrambler, and the first ~44 KB of the
+  scrambled firmware, which starts at `0xD2D0`.  The source runs from kernel RAM
+  on into user RAM, to `0x183E7` - which on FX is the running firmware itself.
+* **Release 2.14 fires on its own untouched cartridge**, once a key-7 or
+  Special32 code is activated.  Its compare string is still `"(C) 1997/8 FCD"`
+  while its database header had already moved on to `"(C) 1997-9 FCD  "`; the
+  compare mismatches at index 8 and 9, and the cart programs 98304 bytes over
+  itself the first time anyone decrypts such a code.  Nothing it ships does
+  that: the decrypt runs over the cheats a user turns on, and no row of its own
+  database takes either route (asserted here) - it takes a code typed in or
+  uploaded.  Putting the two bytes `'/8'` back at cart `0x25008` stops it,
+  which is executed here too.  Pro 2.20, the very next Pro build, is the one
+  with the check removed - and 3.20 onwards compares six characters that avoid
+  the date entirely.  That fits 2.20's missing check being the fix for exactly
+  this, but nothing in the images says so; it is an inference.
+* The damage is **not** the bit-clearing FINDINGS 6.0 assumed.  The parts the
+  chip-id routines identify all erase a page before programming it: Atmel
+  device codes 0xD5 / 0xDA / 0xA4 (4.50 and 4.52 also 0xBA), and, through
+  SST's alternate ID entry, manufacturer 0xBF (SST) and 0xDA.  4.50 alone also
+  drives a "type 3" part with byte-program commands (0xD0, then 0x10 per byte),
+  which would only clear bits; it is not modelled here.  And the 4.52 programmer
+  settles it for the parts it accepts by construction: it re-reads each page it
+  just wrote and programs it again until it matches, so under bit-clearing
+  semantics it never terminates.  Run it that way and it reprograms page 0 for
+  ever, which is not what a shipped product does.
 * One byte defuses it in every build, and it is executed here, not asserted
   from a reading: see `Cart.defuse`.
 
@@ -76,6 +88,7 @@ import struct
 import sys
 import tempfile
 
+import db2
 import fcdcrypt
 import fwemu
 import fwimage
@@ -97,20 +110,28 @@ DST_ARG = 0x1F000000                # ... and, after masking, the destination
 
 # Which part the model answers the chip-id probe as.  Every build reads the
 # device code at cart offset 1 in autoselect mode and folds it into a "chip
-# type" that picks the page size; the V2 routine (0x1A3444) accepts exactly
-# 0xD5, 0xDA and 0xA4 and treats the first as a 128-byte-page part and the
-# other two as 256.  Those are the Atmel AT29C010A / AT29C020 / AT29C040
-# device codes, and those parts have exactly those page sizes - so the family
-# is not a guess, and neither is what a page write does to it (below).
+# type" that picks the page size.  The V2 routine (0x1A3444) first takes 0xD5,
+# 0xDA and 0xA4, the first as a 128-byte-page part and the other two as 256.
+# Those are the Atmel AT29C010A / AT29C020 / AT29C040 device codes, and those
+# parts have exactly those page sizes.  Failing that, it does not give up: it
+# runs SST's six-cycle alternate ID entry (AA/55/80/AA/55/60) and reads the
+# *manufacturer* code at offset 0 - 0xBF, SST, is a 128-byte-page type 0, and
+# 0xDA a "type 2".  4.50 and 4.52 add a device code 0xBA (4.52 drops 0xD5,
+# and programs a part it does not recognise in 128-byte pages anyway), and
+# 4.50 has a type 3 programmed a byte at a time (0xD0, then 0x10 before each
+# byte) - the one part here a page write would not erase first; it is not
+# modelled.
 #
-# All three are recognised by all nine live checkers; SST's 0xBF/0x07 is not
-# (release 4.50 refuses to program at all), which is why they are the ones
-# used here.  A 256 KB V2 cart is an AT29C020 and a 512 KB FX cart an
-# AT29C040, so 256-byte pages are what real hardware would use.
+# The Atmel three and SST are recognised by all nine live checkers - SST only
+# once the alternate entry is modelled, which an earlier version of this model
+# lacked, and without it 4.50 refused to program at all.  A 256 KB V2 cart is
+# an AT29C020 and a 512 KB FX cart an AT29C040, so 256-byte pages are what
+# real hardware would use - if it is Atmel, which the images do not say.
 CHIPS = {
     'AT29C010A': (0x1F, 0xD5),          # 128 KB, 128-byte page
     'AT29C020':  (0x1F, 0xDA),          # 256 KB, 256-byte page  <- the V2 cart
     'AT29C040':  (0x1F, 0xA4),          # 512 KB, 256-byte page  <- the FX cart
+    'SST29EE010': (0xBF, 0x07),         # 128 KB, 128-byte page, found via 0x60
     'mfr DA':    (0xDA, 0x07),          # an id the V2 routine calls "type 2"
 }
 
@@ -126,9 +147,10 @@ class Flash:
               replaces it and bits can go 0 -> 1.  This is what the parts the
               firmware identifies actually do - the device codes it accepts,
               0xD5 / 0xDA / 0xA4, are Atmel AT29C010A / AT29C020 / AT29C040,
-              and 0xBF is SST's 29EE010: one family, all page-erase-then-
-              program, with exactly the 128- and 256-byte pages the code
-              picks between.
+              and 0xBF is SST's 29EE010: all page-erase-then-program, with
+              exactly the 128- and 256-byte pages the code picks between.
+              (4.50's byte-programmed type 3 is the exception, and is not
+              modelled.)
       'and'   programming can only clear bits, the assumption FINDINGS 6.0
               reasons from.  Kept because the 4.50/4.52 programmer settles
               which one is right by *not terminating* under it.
@@ -175,8 +197,12 @@ class Flash:
         s = self.seq[-3:]
         if (len(s) == 3 and s[0] == (UNLOCK1, 0xAA) and s[1] == (UNLOCK2, 0x55)
                 and s[2][0] == UNLOCK1):
+            # 0x60 ends SST's six-cycle alternate ID entry, AA/55/80/AA/55/60,
+            # which is what the probes fall back to when the device code at
+            # offset 1 is not one they know
             self.mode = {0xA0: 'program',
-                         0x90: 'autoselect'}.get(s[2][1], self.mode)
+                         0x90: 'autoselect',
+                         0x60: 'autoselect'}.get(s[2][1], self.mode)
             self.seq = []
 
     def touched(self):
@@ -328,9 +354,10 @@ class Cart:
             return []
         off, mask, text, idxs = self.string
         hdr = self.raw[self.header_off:self.header_off + 64]
-        # V2 walks the whole string but stops one short of strlen(); FX walks
+        # V2 walks the whole string: it stops one short of what its strlen
+        # (0x1A4410 in xteng) returns, but that counts the NUL too.  FX walks
         # the index list stored behind it
-        idxs = idxs or list(range(len(text) - 1))
+        idxs = idxs or list(range(len(text)))
         return [(i, text[i], hdr[i]) for i in idxs]
 
     def fires(self):
@@ -490,7 +517,7 @@ class Cart:
 # --------------------------------------------------------------- the corpus
 
 # Nine images are published; `Xteng.fcd` inside the PC X-Link distribution is a
-# tenth, and the notes have never counted it.
+# tenth, which the notes before TENTH.md never counted.
 RELEASES = ['2.004', '2.005', '2.008', '2.0081', '2.14', '2.20',   # V2
             '3.20', '4.50', '4.52', '4.52']                        # FX
 
@@ -601,14 +628,14 @@ def main(verbose=False):
         check(idxs == (FX_INDICES if fx else []),
               '%s: index list %s' % (rel, idxs))
         check([i for i, _, _ in c.compare] ==
-              (FX_INDICES if fx else list(range(13))),
+              (FX_INDICES if fx else list(range(len(V2_STRING)))),
               '%s: compares %s' % (rel, [i for i, _, _ in c.compare]))
 
         # Nothing else in the image passes 0x3E8 as a pointer: it is not a
-        # buffer the firmware fills, it is an address in PSX kernel RAM and
-        # this is the only place it is ever named as one.  (The V2 builds do
-        # carry a second `addiu $a2, $zero, 0x3e8` elsewhere - 1000 as a
-        # count, in an unrelated routine.)
+        # buffer the firmware fills, it is an address in low PSX RAM and this
+        # is the only place it is ever named as one.  (The V2 builds do carry a
+        # second `addiu $a2, $zero, 0x3e8` elsewhere - 1000 as a count, in an
+        # unrelated routine.)
         loads = [x.address for x in c.ins if x.mnemonic == 'addiu'
                  and x.op_str == '$a0, $zero, 0x3e8']
         check(len(loads) == 1 and c.checker < loads[0] < c.checker + 0x200,
@@ -635,6 +662,23 @@ def main(verbose=False):
         check(ok2 and len(m2.flash.written) == LEN_ARG,
               '%s: corrupting the masked string did not set it off' % rel)
 
+        # Which header bytes it really compares, read off the execution rather
+        # than the string: on a header that matches, spoil the last character
+        # it should look at - the string's last on V2, the 'D' of "FCD" on FX -
+        # and it fires; spoil one it skips - the first past the string on V2,
+        # one inside the date on FX - and it does not.
+        good = bytearray(c.raw)
+        for i in range(len(text)):
+            good[c.header_off + i] = text[i]
+        last, skipped = (max(FX_INDICES), 5) if fx else (len(text) - 1, len(text))
+        for i, want in ((last, True), (skipped, False)):
+            rom = bytearray(good)
+            rom[c.header_off + i] ^= 0xFF
+            m2, _, ok2 = c.run(first, rom=bytes(rom), ram=bytes(ram))
+            check(ok2 and bool(m2.flash.written) == want,
+                  '%s: header byte %d changed, %d bytes programmed'
+                  % (rel, i, len(m2.flash.written)))
+
         bad = [i for i, w, g in c.compare if w != g]
         print('%-6s %-22s checker %08X  header %08X %r  stock: %s'
               % (rel, c.name[:22], c.checker, c.header,
@@ -646,9 +690,22 @@ def main(verbose=False):
         if bad:
             # the shipped image destroys itself.  Two bytes of its own header
             # are the difference, so put them back and watch it stop.
-            print('       -> on an untouched cartridge: %d bytes programmed '
-                  'over cart %06X..%06X' % (len(f.written), min(f.written),
-                                            max(f.written) + 1))
+            print('       -> on an untouched cartridge, at the first key-7 or '
+                  'Special32 code: %d bytes programmed over cart %06X..%06X'
+                  % (len(f.written), min(f.written), max(f.written) + 1))
+            # ... but not by itself: the decrypt runs over the codes a user
+            # turns on, and none of its own database's rows takes a route that
+            # calls the check.  (Counted over every row, payload rows too, so a
+            # zero holds whatever the blocks are.)
+            _, db = db2.find_db(c.raw)
+            rows = [r for _, _, lines in (db or []) for r in lines]
+            reach = [r for r in rows
+                     if romcrypt.ROUTES.get(r[0] & 0xF7) in ('key7', 'fcd')]
+            check(rows and not reach,
+                  '%s: %d of %d rows of its own database reach the check'
+                  % (rel, len(reach), len(rows)))
+            print('       -> none of the %d rows of its own database takes '
+                  'either route' % len(rows))
             check(sorted(f.written) == list(range(LEN_ARG)),
                   '%s: the stock image programmed %d bytes' % (rel, len(f.written)))
             fixed = bytearray(c.raw)
@@ -664,7 +721,8 @@ def main(verbose=False):
         # --- (b) the same cartridge with one byte of the header changed
         rom = bytearray(c.raw)
         rom[c.header_off] ^= 0xFF
-        for chip, page in (('AT29C020', 0x100), ('AT29C010A', 0x80)):
+        for chip, page in (('AT29C020', 0x100), ('AT29C010A', 0x80),
+                           ('SST29EE010', 0x80)):
             m, log, done = c.run(first, rom=bytes(rom), chip=chip, ram=bytes(ram))
             f = m.flash
             check(done, '%s/%s: did not finish' % (rel, chip))
@@ -726,7 +784,9 @@ def main(verbose=False):
             if verbose:
                 print('       %-26s %06X..%06X  %s'
                       % (what, lo, hi,
-                         'destroyed' if lo < LEN_ARG else 'untouched'))
+                         'destroyed' if hi <= LEN_ARG else
+                         'destroyed to %06X' % LEN_ARG if lo < LEN_ARG else
+                         'untouched'))
         # --- (d) one byte, and it never fires again
         off, was, now, what = c.defuse()
         img = bytearray(c.img)
@@ -767,8 +827,9 @@ def main(verbose=False):
           % sorted(x for x in verifying if x))
 
     print('\n%d of %d images carry the check; it fires on an *unmodified* '
-          'cartridge in %d of them.\nIn every one it programs cart '
-          '000000..%06X from PSX RAM 0x%X, and one byte turns it off.'
+          'cartridge in %d of them, at the first code\nthat takes its route. '
+          'In every one it programs cart 000000..%06X from PSX RAM 0x%X, and\n'
+          'one byte turns it off.'
           % (sum(live), len(carts), sum(c.fires() for c in carts),
              LEN_ARG, SRC_ARG))
     for p in problems:

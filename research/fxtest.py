@@ -40,7 +40,7 @@ FILL = bytes([0xAA] * 6)
 # keyed-type set and the known plaintext are all conditions of a pass.
 EXPECT_ROMS = 9
 EXPECT_KEYED = 0xABFB
-EXPECT_PKEY = 6                 # the Punky Bear payload key
+EXPECT_PKEY = 6                 # the Bust-A-Move 3DX payload key (pb.enc)
 EXPECT_ROWS = 30                # ... and how many rows follow its header
 
 
@@ -89,7 +89,7 @@ def main():
                         'published results are for that corpus'
                         % (len(fws), EXPECT_ROMS))
 
-    print('\nknown plaintext (Punky Bear Supercode, %d payload rows)' % EXPECT_ROWS)
+    print('\nknown plaintext (Bust-A-Move 3DX Supercode, %d payload rows)' % EXPECT_ROWS)
     for name, fw in fws:
         pkey, rows, bad = known_plaintext(fw)
         print('   %-22s payload key %d, %d/%d rows match' % (name, pkey, rows - bad, rows))

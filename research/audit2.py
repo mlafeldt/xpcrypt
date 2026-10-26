@@ -7,8 +7,9 @@ as a block that overruns its entry or ends short of it.
     python3 audit2.py                 # every ROM with a recoverable database
     python3 audit2.py roms/xteng.dec  # just that one, with the per-block list
 
-Only the five images `db2.find_db()` recovers a chain from have a database to
-audit; the FX ones do not, and are not a failure (see FINDINGS.md 5.1).
+Only the five images `db2.find_db()` recovers an in-ROM chain from are audited.
+The four FX images keep theirs LZW-packed behind a pointer (`fxdb.py`,
+FINDINGS.md 6.3); `db2` finds nothing in them, which is not a failure here.
 """
 import os
 import sys

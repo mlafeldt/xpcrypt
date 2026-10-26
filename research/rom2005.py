@@ -8,24 +8,29 @@ is a condition of exit status 0.
 
 Two results are worth the file on their own.
 
-**`xpcrypt -x` recovers nothing from it, and the reason is one byte.**  2.005 is
-the only image in the corpus with a game record that declares *zero* cheats -
-`Moto Racer 2` at 0x2A8C5, an empty placeholder sitting between `Mortal Kombat
-4 (US IMPORT)` and `Moto Racer`.  Both locators reject a zero count outright
-(`db2.parse_db`: "cheat count"; `xpcrypt.c:db_cursor_next`: `if (ncheats == 0)
-return -1;`), so the chain fails to parse, no framed candidate survives, and
-`find_database()` reports no database at all.  A zero count is not corruption:
-the record is well formed and the chain continues correctly straight after it.
-Accepting it - skip to the next game record instead of failing the chain -
-recovers 233 games, 1,668 cheats and 2,365 code lines that are lost today.
+**One byte used to cost the whole database.**  2.005 is the only in-ROM chain
+with a game record that declares *zero* cheats - `Moto Racer 2` at 0x2A8C5, an
+empty placeholder between `Mortal Kombat 4 (US IMPORT)` and `Moto Racer`; 2.008
+fills it with seven cheats.  (The German FX 4.50 database, which fxdb.py
+decodes, has five more, used on purpose as a legend.)  Both locators once
+rejected a zero count outright, so the chain failed to parse, no framed
+candidate survived and `xpcrypt -x` reported no database at all.  A zero count
+is not corruption: the record is well formed and the chain continues correctly
+straight after it.  Both readers now skip it (`7070614` in the C, `6f42321`
+in db2.py), and this file holds them to that: `db2.find_db()` has to find the
+chain, `xpcrypt -x` has to print all of it - 234 game records, one of them
+empty, so 233 games, 1,668 cheats and 2,365 code lines - and a walk that still
+rejects the zero has to fail on that one record and nowhere else.
 
 **2.005 stores every block payload in the clear, 2.008 encrypts the same bytes
 with payload key 6.**  Seven Supercode/Megacode headers change key 0 -> key 6
 between the two releases, 95 stored payload rows differ, and all 95 decrypt to
-identical plaintext.  That is a second, six times larger known-plaintext oracle
-for the payload cipher than the 16-block xteng/xtepro pair FINDINGS.md 4.3
-rests on, and it dates the switch to between November 1998 and March 1999.
-Payload key 6 then disappears again in Pro 2.20.
+identical plaintext.  That confirms the payload cipher a second time, but it is
+neither bigger than nor independent of the xteng/xtepro pair FINDINGS.md 4.3
+rests on: that pair is 16 blocks and 141 rows of 2.008 ciphertext, and these 7
+blocks are among the 16 - the same ciphertext, checked against a second clear
+copy.  What it adds is the date: the switch to payload key 6 came between
+November 1998 and March 1999, and Pro 2.20 drops it again.
 
 The rest is negative and just as useful: the .fcd cipher, the COMP01 container,
 the code cipher and the anti-tamper check are all indistinguishable from the
@@ -62,6 +67,7 @@ EXPECT_CHAIN = 0x25000
 EXPECT_TERM = 0x2FF66
 
 EXPECT_EMPTY = [(0x2A8C5, 'Moto Racer 2')]
+EXPECT_RECORDS = 234            # game records, the empty one included
 EXPECT_GAMES = 233              # games that carry at least one cheat
 EXPECT_CHEATS = 1668
 EXPECT_LINES = 2365
@@ -83,6 +89,9 @@ EXPECT_US = dict(games_common=54, cheats_common=12)
 
 EXPECT_ORACLE_BLOCKS = 7
 EXPECT_ORACLE_ROWS = 95
+# the xteng/xtepro oracle (xcheck.py) these are measured against: 2.008's
+# payload-key-6 blocks and their rows
+EXPECT_XCHECK = (16, 141)
 
 EXPECT_BASE = 0x001A0000
 EXPECT_IMAGE = 0x2BBC4
@@ -172,20 +181,6 @@ def key_census(db):
 
 def chain_half(rom, problems):
     print('== record chain')
-    try:
-        db2.parse_db(rom, EXPECT_CHAIN)
-        strict = 'parsed'
-    except ValueError as e:
-        strict = str(e)
-    start, _ = db2.find_db(rom)
-    print('   db2.parse_db at 0x%05X: %s' % (EXPECT_CHAIN, strict))
-    print('   db2.find_db:            %s'
-          % ('0x%05X' % start if start else 'no database'))
-    if strict != 'cheat count' or start is not None:
-        problems.append('the strict locator now accepts 2.005 (%s, %s) - the '
-                        'zero-cheat record is what it used to reject'
-                        % (strict, start))
-
     db, empty, term = records(rom, EXPECT_CHAIN)
     games = sorted(set(g for g, _, _ in db))
     lines = sum(len(c[2]) for c in db)
@@ -202,6 +197,32 @@ def chain_half(rom, problems):
         problems.append('%d/%d/%d to 0x%05X, expected %d/%d/%d to 0x%05X'
                         % (len(games), len(db), lines, term, EXPECT_GAMES,
                            EXPECT_CHEATS, EXPECT_LINES, EXPECT_TERM))
+
+    # What a reader that still rejects a zero count does: it has to fail on
+    # the empty record and nowhere else, or this is not the one-byte story.
+    try:
+        records(rom, EXPECT_CHAIN, allow_empty=False)
+        strict = 'parsed'
+    except ValueError as e:
+        strict = str(e)
+    print('   a walk that rejects a zero count: %s' % strict)
+    if strict != 'cheat count 0 at %#x' % EXPECT_EMPTY[0][0]:
+        problems.append('the zero-rejecting walk ends with %r, not on the empty '
+                        'record at 0x%05X' % (strict, EXPECT_EMPTY[0][0]))
+
+    # ... and what the reference reader does now that it skips the record:
+    # the same chain, found by framing alone, with the same records.
+    start, found = db2.find_db(rom)
+    recs = db2.game_records(rom, start) if start is not None else []
+    print('   db2.find_db: %s, %d game records, %d cheats, %d code lines'
+          % ('0x%05X' % start if start is not None else 'no database',
+             len(recs), len(found or []),
+             sum(len(c[2]) for c in found or [])))
+    if start != EXPECT_CHAIN or found != db or len(recs) != EXPECT_RECORDS \
+            or [(a, n) for a, n, c in recs if not c] != EXPECT_EMPTY:
+        problems.append('db2.find_db gives %s with %d records - it should skip '
+                        'the empty record and return the relaxed walk at 0x%05X'
+                        % (start, len(recs), EXPECT_CHAIN))
 
     types, payload = collections.Counter(), 0
     for _, _, ls in db:
@@ -272,6 +293,7 @@ def payload_half(db, problems):
 
     uk, later = keyed(db), keyed(later_db)
     rekeyed = rows = wrong = 0
+    where = set()
     for k in sorted(set(uk) & set(later)):
         a, b = uk[k], later[k]
         if len(a) != len(b):
@@ -281,6 +303,7 @@ def payload_half(db, problems):
             if ra == 'code' and rb == 'code' \
                     and block_key(ca) == 0 and block_key(cb) == 6:
                 rekeyed += 1
+                where.add(k)
             if ra.startswith('data') and rb.startswith('data') and a[ia] != b[ib]:
                 rows += 1
                 if bytes(ca) != bytes(cb):
@@ -291,6 +314,26 @@ def payload_half(db, problems):
         problems.append('payload oracle %d/%d/%d, expected %d/%d/0'
                         % (rekeyed, rows, wrong, EXPECT_ORACLE_BLOCKS,
                            EXPECT_ORACLE_ROWS))
+
+    # Against the oracle FINDINGS.md 4.3 already has: every payload-key-6 block
+    # of 2.008.  This one is smaller, and the same ciphertext.
+    blocks, block_rows, keyed6 = 0, 0, set()
+    for k, ls in later.items():
+        for _, code, role in dbtypes.walk(list(ls)):
+            if role == 'code':
+                six = block_key(code) == 6
+                blocks += six
+                if six:
+                    keyed6.add(k)
+            elif six:
+                block_rows += 1
+    print('   2.008 has %d payload-key-6 blocks in %d rows; the %d re-keyed '
+          'here are %s them' % (blocks, block_rows, rekeyed,
+                                'among' if where <= keyed6 else 'NOT all among'))
+    if (blocks, block_rows) != EXPECT_XCHECK or not where <= keyed6:
+        problems.append('2.008 payload-key-6 blocks %d/%d, expected %d/%d, '
+                        'with the re-keyed ones among them'
+                        % ((blocks, block_rows) + EXPECT_XCHECK))
 
 
 def container_half(rom, raw, problems):
@@ -398,18 +441,32 @@ def firmware_half(path, img, problems):
 
 
 def tool_half(problems):
-    """What the shipped binary does with the file today."""
+    """What the shipped binary does with the file: extract all of it."""
     print('\n== xpcrypt -x')
     binary = os.path.join('..', 'xpcrypt')
     if not os.path.exists(binary):
         print('   skipped: build ../xpcrypt first')
         return
     p = subprocess.run([binary, '-x', FCD], capture_output=True)
-    print('   exit %d, stdout %d bytes, stderr %r'
-          % (p.returncode, len(p.stdout), p.stderr.decode().strip()))
-    if p.returncode == 0 or b'no cheat database' not in p.stderr:
-        problems.append('xpcrypt -x no longer fails on 2.005 - if the '
-                        'zero-cheat record is now accepted, this file is stale')
+    out = p.stdout.decode('latin-1').split('\n')
+    # -x prints a quoted game name, then each cheat name and its code lines,
+    # and closes every game with //=====
+    code = re.compile(r'^[0-9A-F]{8} [0-9A-F]{4}$')
+    games = sum(1 for l in out if l.startswith('"'))
+    lines = sum(1 for l in out if code.match(l))
+    cheats = sum(1 for l in out if l and not l.startswith('"')
+                 and l != '//=====' and not code.match(l))
+    print('   exit %d, stderr %r: %d games, %d cheats, %d code lines'
+          % (p.returncode, p.stderr.decode().strip(), games, cheats, lines))
+    if p.returncode != 0 or p.stderr or (games, cheats, lines) != (
+            EXPECT_GAMES, EXPECT_CHEATS, EXPECT_LINES):
+        problems.append('xpcrypt -x on 2.005: exit %d, %d/%d/%d - expected '
+                        'exit 0 and %d/%d/%d, the empty game skipped'
+                        % (p.returncode, games, cheats, lines, EXPECT_GAMES,
+                           EXPECT_CHEATS, EXPECT_LINES))
+    if any(l == '"%s"' % EXPECT_EMPTY[0][1] for l in out):
+        problems.append('xpcrypt -x prints the empty game %r'
+                        % EXPECT_EMPTY[0][1])
 
 
 def main():

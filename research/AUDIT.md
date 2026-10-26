@@ -6,14 +6,21 @@ Audit dates: 2026-07-28 through 2026-07-30, and 2026-10-26.
 > material added after the eighth: `TENTH.md`, `PLUGIN.md`, `N64.md`, `ENCRYPT.md`,
 > `FCD.md` and the later scripts. It is also the first to re-derive the firmware
 > claims with independent tooling rather than the repo's own. It overturns three
-> headline conclusions (FX databases, type C/D/E, the N64 ciphers). Its corrections to
-> the notes are applied as marked callouts; **nothing in the C source or the scripts was
-> changed**, so the script and code findings below are open. The older sections are
-> history.
+> headline conclusions (FX databases, type C/D/E, the N64 ciphers). Every research-side
+> finding is now fixed in the notes and the scripts (see its Disposition). The "Open"
+> markers in its findings record the state after the first round. What remains open is
+> the C source, planned in `TODO.md`. The older sections are history.
 
 ## Ninth pass: deep review against the binaries - 2026-10-26
 
 ### Scope and standard of evidence
+
+> **Two rounds.** The first round recorded the findings below and applied the doc
+> corrections as callouts (`337cb0c`). The second fixed everything in `research/`:
+> the callouts are folded into the bodies, the scripts are corrected, and new
+> assertions back the new results. Items marked "Open" below were open after the
+> first round; the Disposition at the end lists what the second round did and the
+> little that is left.
 
 Every note in this directory, re-checked against the ten images (the nine in `roms/`
 plus 2.005 from `pc/ROMS/Xteng.fcd`), the four PC binaries and, for `N64.md`/
@@ -193,9 +200,12 @@ Not as published:
   after the first type 6. The second's mask row is hoisted as an F anchor
   (`F01FE3C9 120F`) and decrypted as key 7, which runs the copyright check. The
   second header goes in raw. "Room for exactly one Megacode" understates this.
-* **The malformed MGS record is worse than "malformed".** Executed: it swallows the
-  three cheats enabled after it and builds a 13,816-word copy over kernel RAM from
-  `0xA0000040`, the engine included.
+* **The malformed MGS record is worse than "malformed".** Executed: it takes the next
+  enabled cheat. That cheat's name line and first code become its descriptor and
+  mask, and the rest of the cheat becomes payload. It builds a 13,816-word copy over
+  kernel RAM from `0xA0000040`, the engine included. (The first round said "the three
+  cheats enabled after it". That came from a test selection without cheat-name
+  lines.)
 * **Overrunning Supercode rows are handled three ways.** V2 2.004-2.0081 and Pro 2.14
   hang (`j .`, `xteng` `0x1AD270`). Pro 2.20 returns length `0x18`, because it
   branches one instruction past `move v0,t2`. FX handles it. No shipped code
@@ -261,8 +271,10 @@ Not as published:
 * **2.005 vs 2.008.** 208 of the 223 shared game names have identical codes and 15
   differ; the doc said "byte-identical". The `Moto Racer 2` offsets were one too high.
   2.005's default-off rows are all keyed (119 rows), which settles the TENTH §4
-  question against the suspicion. The FX 3.20 and 4.52 databases each have 112
-  keyless default-off rows. *All applied* in `TENTH.md`.
+  question against the suspicion. The FX databases keep bit 3 on 113 rows (3.20), 112
+  (4.52) and 4 (4.50). 113, 112 and 1 of them are keyless, and 112, 112 and 1 sit at
+  an addressed type (3, 7, 8), so they land at the wrong address. *All applied* in
+  `TENTH.md`.
 * **`rom2005.py`'s "six times larger oracle"** compares 7 blocks / 95 rows against
   16 / 141, so it is smaller. It is not independent either: the 7 are among the 16.
   Open.
@@ -374,21 +386,70 @@ Not as published:
 
 ### Disposition
 
-* **Applied:** corrections to the notes, as marked "Ninth pass" callouts or in-place
-  fixes in `FINDINGS.md`, `ENGINE.md`, `TENTH.md`, `TODO.md`, `N64.md`, `PLUGIN.md`,
-  `FCD.md`, `ENCRYPT.md`, `REVERSING.md` and `ADVANCED_EXPLORER_CODES.md`.
-* **Not applied, by instruction:** everything in the C source and the scripts:
-  * `rom2005.py`'s stale assertions, which break `make check`;
-  * the `comms.py` claims;
-  * `packstats.py`;
-  * the `selfdestruct.py` chip text and `range(len-1)`;
-  * `plugin.py`'s unchecked slots and undefined `path`;
-  * `typecx.py`;
-  * `engineemu.py`'s filtered DCIC write;
-  * the `find_database()` empty-chain case;
-  * the header-guard divergence.
-* **Not applied, as larger rewrites:** the in-body sections listed as open above.
-  Their callouts point here.
+**First round** (`337cb0c`). The doc corrections were applied as "Ninth pass"
+callouts. The script and C findings were recorded but not fixed.
+
+**Second round: everything in `research/` is fixed.**
+
+* **The gate is whole again.** `rom2005.py` asserts the post-`7070614` behaviour,
+  so `make check` runs every target, `payloads`, `typecx` and `selfdestruct`
+  included. A new `fxdb` target gates the FX databases.
+* **Notes.** The callouts are folded into the bodies of `ENGINE.md` (findings 2, 3
+  and 5; types C, D and E; §§6, 7, 13 and 16; the §4 counts; the key-nibble table),
+  `PLUGIN.md`, `N64.md`, `REVERSING.md` (§10.5 and the slips), `FINDINGS.md` (§4.1
+  with the FX and 2.005 rows, §6.0, §6.3, §6.5, §7), `TENTH.md`, `ENCRYPT.md`,
+  `FCD.md`, `ADVANCED_EXPLORER_CODES.md` and `MODULE_SPLIT.md`. `TODO.md` is
+  rewritten as a plan for `main`. The notes now name `xp_crypto.c`/`.h`, as on this
+  branch. `MODULE_SPLIT.md` keeps the branch's names and says so.
+* **Scripts.**
+  * `fxdb.py` decodes the FX containers twice, with its own LZW decoder and by running
+    the firmware's decompressor, and asserts every count.
+  * `engineemu.py` runs all four staging passes in all ten images. It asserts the
+    normaliser and ten real selections, and it asserts the FX DCIC clear on its own
+    instead of filtering it out.
+  * `engine.py` locates the normaliser.
+  * `typecx.py` asserts that the `C0` jokers become type 7.
+  * `selfdestruct.py` compares 14 characters, models SST's ID entry, and asserts
+    that no stock 2.14 row reaches the check.
+  * `packstats.py` counts escape-byte occurrences.
+  * `comms.py` asserts both Xlink95 builds' 512 KB read and `'X'`'s shared receive
+    routine, and keys the command set by release.
+  * `plugin.py` finds the header buffer from the 0x200-byte read and asserts the
+    seek.
+  * `oracle_test.py` gains a suite for headers with key bits 1-3, which counts 114
+    rows where xpcrypt and the cart disagree.
+  * `rom2005.py`, `prechain.py`, `db2.py`, `xcheck.py`, `defaultoff.py` and
+    `xcode.py`: wording, plus the corrected or extra assertions.
+* **Found while fixing.**
+  * The list walker's row-count bug needs an odd high nibble, so it fires at 507-511
+    payload bytes, 1,019-1,023 and so on, not at 251-255. It is now reproduced.
+  * Pass 3 clears bit 0 of a hoisted F's *stored* byte 3 before decrypting it, so
+    three shipped USA key-4 anchors (Diablo twice, Golden Nugget) can never match.
+    Executed in all ten images.
+  * FX drops an overrunning block together with its guard and carries on.
+  * The N64 cheat database at `0x30000` uses the PSX layout. Under the key-6 cipher,
+    3,598 of its 3,630 `E8` rows become RAM-range writes; the raw rows give none.
+    That is evidence for `N64.md`'s code-cipher finding that does not rest on
+    hammerhead.
+* **Still open (C source, planned in `TODO.md`):**
+  * FX `-x`;
+  * the empty-only-chain case in `find_database()`;
+  * the header-guard divergence;
+  * the warnings for cart behaviour;
+  * the brick check;
+  * the release.
+* **Still open (research).** These were not established:
+  * what disarms the `0x700` poke table on Pro/FX;
+  * whether the menu caps the selection size;
+  * the extent of type A;
+  * what the R3000 does about an odd address;
+  * the N64 firmware's own decrypt routine;
+  * the flash chip names, which come from memory rather than datasheets;
+  * the bank-switched FX read, which was decompiled, not executed.
+
+  Widening the five-database gates to 2.005 and the FX databases was left out on
+  purpose, because it changes every published count. A one-off run over them (10,970
+  more lines in 7,582 cheats) found no failures in the oracle or the round trip.
 
 ## Extraction implementation audit - 2026-07-30
 

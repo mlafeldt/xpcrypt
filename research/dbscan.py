@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Extract the Xploder/Xplorer ROM code database and audit type 5/6 blocks."""
+"""Extract the Xploder/Xplorer ROM code database and audit type 5/6 blocks.
+
+The reader here is the first, strict one: it takes only printable names, so the
+abbreviation bytes 1-7 (FINDINGS.md 4.1) make it reject xteng.dec, xtger.dec
+and the USA ROM outright.  db2.py is the reader the notes rely on; what the
+other scripts still import from here is decrypt_line(), xpcrypt's own code
+decryption as a model."""
 import sys
 
 def decrypt_line(b):
