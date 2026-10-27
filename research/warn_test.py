@@ -66,8 +66,24 @@ DATABASES = {
     'german-450.dec': {'switched off by default': 1, 'select no cipher': 1,
                        'empty payload': 2, 'before the payload': 1},
 }
-PHRASES = ('switched off by default', 'select no cipher', 'Special32/33',
+# What tells the -x summary lines apart, most specific first: a line is the
+# first of these it contains, and a line that contains none is a failure.
+PHRASES = ('unknown payload key', 'block header', 'switched off by default',
+           'select no cipher', 'Special32 route', 'Special33 route',
            'empty payload', 'before the payload')
+
+# A synthetic database with one of every kind -x summarizes, and the summary
+# it has to produce: one line per kind, never one per code.
+SUMMARY_CHAIN = (
+    b'Game\0\x04'
+    b'Unknown keys\0\x04' + bytes.fromhex(
+        '500000003006 112233445566 500000003006 112233445566') +
+    b'Default off\0\x01' + bytes.fromhex('8802A798FFFF') +
+    b'Header bits\0\x02' + bytes.fromhex('511234560006 112233445566') +
+    b'Special\0\x01' + bytes.fromhex('820000000001') +
+    b'\xff\xff\xff\xff')
+SUMMARY = {'unknown payload key': 2, 'switched off by default': 1,
+           'block header': 1, 'Special32 route': 1}
 
 # encrypted image -> must -r warn about its copyright header?
 COPYRIGHT = {
@@ -92,6 +108,35 @@ def check_stream(problems):
     print('stream warnings: %d cases' % len(STREAM))
 
 
+def summary_of(path, problems):
+    """The -x summary of @path, as phrase -> count."""
+    got = {}
+    for line in stderr_of(['-x', str(path)]).splitlines():
+        phrase = next((p for p in PHRASES if p in line), None)
+        words = line.split()
+        if phrase is None or phrase in got or not words[1].isdigit():
+            problems.append('-x %s: unexpected line %r' % (path.name, line))
+            continue
+        got[phrase] = int(words[1])
+    return got
+
+
+def check_summary(problems):
+    rom = bytearray(b'\xff' * 0x400)
+    rom[0x10:0x14] = b'Sony'
+    rom[0x100:0x100 + len(SUMMARY_CHAIN)] = SUMMARY_CHAIN
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / 'summary.rom'
+        path.write_bytes(rom)
+        got = summary_of(path, problems)
+        err = stderr_of(['-x', str(path)])
+    if got != SUMMARY:
+        problems.append('-x summary: %s, expected %s' % (got, SUMMARY))
+    if 'encrypting it with any key' not in err:
+        problems.append('-x summary: no hint on the default-off line')
+    print('-x summary: one line per kind')
+
+
 def check_databases(problems):
     rom_dir = Path('roms')
     have = [n for n in DATABASES if (rom_dir / n).exists()]
@@ -99,12 +144,7 @@ def check_databases(problems):
         print('-x warning counts: skipped (no roms/)')
         return
     for name in have:
-        err = stderr_of(['-x', str(rom_dir / name)])
-        got = {}
-        for line in err.splitlines():
-            for phrase in PHRASES:
-                if phrase in line:
-                    got[phrase] = int(line.split()[1])
+        got = summary_of(rom_dir / name, problems)
         if got != DATABASES[name]:
             problems.append('-x %s: %s, expected %s' % (name, got,
                                                         DATABASES[name]))
@@ -155,6 +195,7 @@ def main():
         sys.exit('no xpcrypt at %s - build it first' % XPCRYPT)
     problems = []
     check_stream(problems)
+    check_summary(problems)
     check_databases(problems)
     check_copyright(problems)
     for p in problems:

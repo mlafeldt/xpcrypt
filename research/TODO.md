@@ -43,7 +43,19 @@ The plan the ninth pass of `AUDIT.md` produced, as it landed on `main`:
   passes through untouched.
 * **`42a0ab8`** - the slide code (type B) counts among the addressed types for the
   default-off warning; the first cut left it out.
-* **`e0d7134`** - release 1.2, with the README history and a Warnings section.
+* **`359ce8d`..`ec2bc60`** - a code-quality pass before the release:
+  * the first code byte is described in one place: `xp_code_route()`, a table of
+    the sixteen types, and the declared length from `xp_parse_block()`;
+  * the stream returns warnings as events and does no I/O. The text filter prints
+    them, and `-x` counts them, so an unknown payload key, a header's key bits
+    and the default-off hint now get their summary lines too;
+  * `rom_module()` tells the generations apart once, and the copyright check is
+    a table;
+  * the database reader takes a chain rather than a start offset, and
+    `locate_database()` owns the FX-vs-V2 choice;
+  * one pass classifies a text line;
+  * the comments keep invariants, not history.
+* **`e8daf3e`** - release 1.2, with the README history and a Warnings section.
 
 `warn_test.py` (`make warnings`) holds every warning to the finding it rests on, both
 on the stream and in the `-x` counts per database.
@@ -89,6 +101,20 @@ of either generation. Useless for converting codes, so whether to do it depends 
 whether xpcrypt should be a cheat tool or a cartridge tool.
 
 ---
+
+### Is a keyless default-off Supercode addressed?
+
+The default-off warning covers the types the engine stores to or compares at:
+0 3 7 8 9 B E F. Type 5 is left out, although the engine copies a Supercode's
+payload to its address. Staging builds that list word as `0x50aaaaaa`, which may
+drop bit 3 before the engine ever sees it. Read pass 2's emit before adding the
+type.
+
+### The module split, again
+
+The code-quality review of 1.2 asked for `MODULE_SPLIT.md`'s split before the
+push. That was set aside: `xpcrypt.c` is about 1,350 lines. The event-returning
+stream is the seam `MODULE_SPLIT.md` wanted for it.
 
 ### Tests on `main`
 
