@@ -51,7 +51,8 @@
  *     because a stream of codes has no cheat-entry boundary in it, where the
  *     cartridge stops at the end of the cheat;
  *   - the code engine, the ROM compressor and the anti-tamper check are not
- *     implemented. The CLI reads the cheat database, but does not emulate it.
+ *     implemented. The CLI reads the cheat database and warns about what the
+ *     engine and the check will do, but emulates neither.
  */
 
 /*

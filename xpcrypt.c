@@ -1103,6 +1103,81 @@ out:
 }
 
 /*
+ * The anti-tamper check. Nine of the ten known firmwares compare the start of
+ * the support module's header against a copyright string hidden in their own
+ * code while they decrypt certain codes, and on a mismatch program 96 KB of PSX
+ * RAM over their own flash, boot code included - the cartridge does not come
+ * back from that. V2 compares all 14 characters of "(C) 1997/8 FCD" and runs
+ * the check from the key-7 and Special32 routes; FX compares the six at 0-2 and
+ * 11-13 of "(C) 1997-9 FCD" and runs it from the key-4 route; Pro 2.20 has no
+ * check at all. Pro 2.14 looks for 1997/8 in a header of its own that says
+ * 1997-9, so a stock 2.14 cartridge is one key-7 code away from it.
+ *
+ * xpcrypt never touches a cartridge, so this only warns: whoever flashes the
+ * image should know.
+ */
+#define XP_RELEASE_OFFSET	0x10	/* "release 2.008" and the like */
+#define XP_RELEASE_LEN		12	/* "release 2.20", without a suffix */
+#define XP_COPYRIGHT_LEN	14
+
+static const struct {
+	const char *expect;
+	unsigned checked;	/* bit i: character i is compared */
+	const char *trigger;
+} copyright[] = {
+	[GEN_V2] = { "(C) 1997/8 FCD", 0x3FFF, "a key-7 or Special32 code" },
+	[GEN_FX] = { "(C) 1997-9 FCD", 0x3807, "a key-4 code" }
+};
+
+static int is_release(const u8 *hdr, const char *release)
+{
+	return memcmp(hdr + XP_RELEASE_OFFSET, release, XP_RELEASE_LEN) == 0;
+}
+
+/*
+ * Warn if a plaintext ROM fails its firmware's copyright check. Does nothing
+ * for a buffer that is not plaintext, so it can be called on both sides of a
+ * conversion.
+ */
+static void check_copyright(const u8 *rom, size_t size)
+{
+	enum generation gen;
+	const u8 *hdr;
+	size_t off, i;
+
+	gen = rom_module(rom, size, &off);
+	if (!xp_rom_is_plain(rom, size) || gen == GEN_UNKNOWN ||
+			size - off < XP_RELEASE_OFFSET + XP_RELEASE_LEN)
+		return;
+	hdr = rom + off;
+	if (gen == GEN_V2 && is_release(hdr, "release 2.20"))
+		return;
+
+	for (i = 0; i < XP_COPYRIGHT_LEN; i++)
+		if (((copyright[gen].checked >> i) & 1) &&
+				hdr[i] != (u8)copyright[gen].expect[i])
+			break;
+	if (i == XP_COPYRIGHT_LEN)
+		return;
+
+	/* Pro 2.14 carries the FX string, where it checks for the V2 one. */
+	if (gen == GEN_V2 && is_release(hdr, "release 2.14") &&
+			memcmp(hdr, copyright[GEN_FX].expect,
+				XP_COPYRIGHT_LEN) == 0) {
+		fprintf(stderr, "Warning: a stock Xplorer Pro 2.14 fails its own "
+			"copyright check - its header says 1997-9 where its "
+			"firmware looks for 1997/8 - so it overwrites 96 KB of "
+			"its own flash the first time a key-7 or Special32 code "
+			"is activated\n");
+		return;
+	}
+	fprintf(stderr, "Warning: the copyright header of this ROM fails its "
+		"firmware's check, so a cartridge running it overwrites 96 KB "
+		"of its own flash the first time %s is activated\n",
+		copyright[gen].trigger);
+}
+
+/*
  * Decrypt or encrypt an Xploder ROM.
  */
 static int crypt_rom(const char *infile, const char *outfile)
@@ -1118,10 +1193,13 @@ static int crypt_rom(const char *infile, const char *outfile)
 	if (read_rom(infile, &buf, &nbytes))
 		return -1;
 
+	/* The check reads the plaintext, whichever side of the pair that is. */
+	check_copyright(buf, nbytes);
 	if (xp_crypt_rom(buf, nbytes)) {
 		fprintf(stderr, "Error: could not process ROM\n");
 		goto out;
 	}
+	check_copyright(buf, nbytes);
 
 	/*
 	 * Only now, with a whole converted ROM in hand, open the output. Doing
