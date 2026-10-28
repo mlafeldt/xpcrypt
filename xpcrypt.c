@@ -27,6 +27,7 @@
 #include <string.h>
 #include <getopt.h>
 #include "crypto.h"
+#include "lzw.h"
 
 /* Application's name and current version */
 #define APP_NAME	"xpcrypt"
@@ -417,11 +418,11 @@ static int db_name_end(const u8 *rom, size_t size, size_t pos, size_t *end)
  * bytes.
  */
 static void init_db_cursor(struct db_cursor *cursor, const u8 *rom,
-		size_t size, size_t start)
+		size_t size)
 {
 	cursor->rom = rom;
 	cursor->size = size;
-	cursor->pos = start;
+	cursor->pos = 0;
 	cursor->game_name = NULL;
 	cursor->game_name_len = 0;
 	cursor->cheats_left = 0;
@@ -496,6 +497,28 @@ static int db_cursor_next(struct db_cursor *cursor, struct db_record *record)
 	return 1;
 }
 
+/*
+ * Walk the whole record chain at @rom and count it into @info. Returns 0 if
+ * the chain ends cleanly at its terminator, -1 if it is malformed anywhere.
+ */
+static int db_scan(const u8 *rom, size_t size, struct db_info *info)
+{
+	struct db_cursor cursor;
+	struct db_record record;
+	int ret;
+
+	info->games = info->cheats = info->lines = 0;
+	init_db_cursor(&cursor, rom, size);
+	while ((ret = db_cursor_next(&cursor, &record)) == 1) {
+		if (record.first_in_game)
+			info->games++;
+		info->cheats++;
+		info->lines += record.nlines;
+	}
+
+	return ret < 0 ? -1 : 0;
+}
+
 static int db_richer(const struct db_info *candidate,
 		const struct db_info *best)
 {
@@ -537,23 +560,13 @@ static int find_database(const u8 *rom, size_t size, size_t *offset)
 	int found = 0;
 
 	for (start = 0; start < size; start++) {
-		struct db_cursor cursor;
-		struct db_record record;
-		struct db_info candidate = { 0, 0, 0 };
-		int ret;
+		struct db_info candidate;
 
 		if (start != 0 && (start < 4 ||
 				!db_is_term(rom, size, start - 4)))
 			continue;
 
-		init_db_cursor(&cursor, rom, size, start);
-		while ((ret = db_cursor_next(&cursor, &record)) == 1) {
-			if (record.first_in_game)
-				candidate.games++;
-			candidate.cheats++;
-			candidate.lines += record.nlines;
-		}
-		if (ret < 0)
+		if (db_scan(rom + start, size - start, &candidate))
 			continue;
 
 		if (!found || db_richer(&candidate, &best)) {
@@ -567,6 +580,113 @@ static int find_database(const u8 *rom, size_t size, size_t *offset)
 		return -1;
 	*offset = best_offset;
 	return 0;
+}
+
+/*
+ * The ROM header points at the firmware's support module, and that module
+ * holds the address of the cheat database. Both are flash addresses: the low
+ * 24 bits are the offset in the image.
+ */
+#define XP_MODULE_PTR	0x7C	/* ROM offset of the module address */
+#define XP_DB_SLOT	0xB8	/* module offset of the database address */
+#define XP_FLASH_SIZE	0x80000	/* the largest cartridge flash, 512 KB */
+
+static uint32_t get_le32(const u8 *p)
+{
+	return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+		((uint32_t)p[3] << 24);
+}
+
+/*
+ * Read the 32-bit flash address at ROM offset @pos and turn it into an offset
+ * of the image. Returns -1 if either lies outside the image.
+ */
+static int read_flash_ptr(const u8 *rom, size_t size, size_t pos,
+		uint32_t *addr, size_t *offset)
+{
+	if (pos > size || size - pos < 4)
+		return -1;
+	*addr = get_le32(&rom[pos]);
+	*offset = *addr & 0x00FFFFFF;
+	return *offset < size ? 0 : -1;
+}
+
+/* The two cartridge generations, as a ROM's support module tells them apart. */
+enum generation {
+	GEN_UNKNOWN,
+	GEN_V2,
+	GEN_FX
+};
+
+/*
+ * Find the support module of a plaintext ROM. The FX addresses its flash
+ * through KSEG0, 0x9F000000, where every V2 firmware uses KUSEG, 0x1F000000,
+ * so the module address tells the two generations apart.
+ */
+static enum generation rom_module(const u8 *rom, size_t size, size_t *module)
+{
+	uint32_t addr;
+
+	if (read_flash_ptr(rom, size, XP_MODULE_PTR, &addr, module))
+		return GEN_UNKNOWN;
+	switch (addr >> 24) {
+	case 0x1F:
+		return GEN_V2;
+	case 0x9F:
+		return GEN_FX;
+	default:
+		return GEN_UNKNOWN;
+	}
+}
+
+/*
+ * Unpack the cheat database of an Xplorer FX ROM into @db, which the caller
+ * frees. Returns 1 for an FX database, 0 if @rom is not an FX ROM - a V2
+ * database is found by find_database() instead - and -1 for an FX ROM whose
+ * database is malformed.
+ *
+ * On V2 the database address names the record chain itself. On FX it names a
+ * container: the packed and the unpacked size as two little-endian words,
+ * then the record chain, LZW-compressed (see lzw.c). The FX appends the four
+ * 0xFF bytes of the terminator before it compresses, so what comes out is the
+ * very chain a V2 ROM stores.
+ */
+static int fx_database(const u8 *rom, size_t size, u8 **db, size_t *db_size)
+{
+	struct db_info info;
+	uint32_t addr;
+	size_t module_off, off, packed, unpacked, n;
+	u8 *buf;
+
+	*db = NULL;
+	*db_size = 0;
+	if (rom_module(rom, size, &module_off) != GEN_FX)
+		return 0;
+
+	if (module_off > SIZE_MAX - XP_DB_SLOT ||
+			read_flash_ptr(rom, size, module_off + XP_DB_SLOT,
+				&addr, &off) ||
+			size - off < 8)
+		return -1;
+	packed = get_le32(&rom[off]);
+	unpacked = get_le32(&rom[off + 4]);
+	if (packed > size - off - 8 || unpacked == 0 ||
+			unpacked > XP_FLASH_SIZE)
+		return -1;
+
+	buf = (u8 *)malloc(unpacked);
+	if (buf == NULL)
+		return -1;
+	if (lzw_unpack(&rom[off + 8], packed, buf, unpacked, &n) ||
+			n != unpacked || db_scan(buf, n, &info) ||
+			info.games == 0) {
+		free(buf);
+		return -1;
+	}
+
+	*db = buf;
+	*db_size = n;
+	return 1;
 }
 
 static int print_db_name(const u8 *name, size_t len, int quoted)
@@ -591,13 +711,13 @@ static int print_db_name(const u8 *name, size_t len, int quoted)
 }
 
 /* Print one already-located database, decrypting each cheat independently. */
-static int print_database(const u8 *rom, size_t size, size_t start)
+static int print_database(const u8 *rom, size_t size)
 {
 	struct db_cursor cursor;
 	struct db_record record;
 	int ret;
 
-	init_db_cursor(&cursor, rom, size, start);
+	init_db_cursor(&cursor, rom, size);
 	while ((ret = db_cursor_next(&cursor, &record)) == 1) {
 		struct code_stream stream;
 		size_t line;
@@ -622,6 +742,37 @@ static int print_database(const u8 *rom, size_t size, size_t start)
 	}
 
 	return ret;
+}
+
+/*
+ * Find the record chain of a plaintext ROM: the one an FX container holds,
+ * unpacked into @owned, which the caller frees, or the one a V2 ROM keeps in
+ * place. Says what is wrong and returns -1 if there is none.
+ */
+static int locate_database(const u8 *rom, size_t size, const u8 **chain,
+		size_t *len, u8 **owned)
+{
+	size_t offset;
+
+	switch (fx_database(rom, size, owned, len)) {
+	case 1:
+		*chain = *owned;
+		return 0;
+	case 0:
+		break;
+	default:
+		fprintf(stderr, "Error: the Xplorer FX cheat database in the "
+			"input ROM is damaged\n");
+		return -1;
+	}
+
+	if (find_database(rom, size, &offset)) {
+		fprintf(stderr, "Error: no cheat database found in input ROM\n");
+		return -1;
+	}
+	*chain = rom + offset;
+	*len = size - offset;
+	return 0;
 }
 
 /* Read a ROM into memory for conversion or extraction. */
@@ -681,8 +832,9 @@ out:
 static int extract_codes(const char *infile)
 {
 	u8 *rom;
-	size_t size;
-	size_t offset;
+	u8 *db = NULL;
+	const u8 *chain;
+	size_t size, len;
 	int ret = -1;
 
 	if (read_rom(infile, &rom, &size))
@@ -693,11 +845,9 @@ static int extract_codes(const char *infile)
 		goto out;
 	}
 
-	if (find_database(rom, size, &offset)) {
-		fprintf(stderr, "Error: no cheat database found in input ROM\n");
+	if (locate_database(rom, size, &chain, &len, &db))
 		goto out;
-	}
-	if (print_database(rom, size, offset) || fflush(stdout) != 0 ||
+	if (print_database(chain, len) || fflush(stdout) != 0 ||
 			ferror(stdout)) {
 		fprintf(stderr, "Error: could not write extracted codes\n");
 		goto out;
@@ -705,6 +855,7 @@ static int extract_codes(const char *infile)
 
 	ret = 0;
 out:
+	free(db);
 	free(rom);
 	return ret;
 }

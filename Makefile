@@ -5,6 +5,7 @@ prefix = $(HOME)
 
 PROG = xpcrypt
 OBJS += crypto.o
+OBJS += lzw.o
 OBJS += xpcrypt.o
 
 all: $(PROG)
@@ -15,7 +16,7 @@ install: $(PROG)
 $(PROG): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
-$(OBJS): crypto.h
+$(OBJS): crypto.h lzw.h
 
 clean:
 	$(RM) $(PROG) $(OBJS)
