@@ -74,21 +74,72 @@
  */
 
 /*
- * The Xploder picks the crypto routine of a code from a table of 244 entries,
- * indexed by the first code byte with the "switched off by default" bit masked
- * out. That table gives the code types 2, A, C, and E no crypto route: their
- * entries copy the code verbatim, whatever their key bits say. Which of
- * the sixteen types carry a key is all that is left of that table once the key
- * nibble is taken out of it, so here it is as a bit set.
+ * What the sixteen code types are to the cartridge.
+ *
+ * TYPE_KEYED: the decrypt routine has a cipher route for the type. It picks the
+ * route from a table of 244 entries indexed by the first code byte with the
+ * default-off bit masked out, and that table gives the types 2, A, C and E
+ * none: their entries copy the code verbatim, whatever its key bits say. Which
+ * types carry a key is all that is left of the table once the key nibble is
+ * taken out.
+ *
+ * TYPE_ADDRESSED: the code engine stores to or compares at the code's address.
  */
-#define XP_KEYED_TYPES	0xABFB
+enum {
+	TYPE_KEYED = 1,
+	TYPE_ADDRESSED = 2
+};
 
-/*
- * Returns non-zero if codes of the type of @code are encrypted at all.
+static const u8 type_flags[16] = {
+	[0x0] = TYPE_KEYED | TYPE_ADDRESSED,	/* 32-bit write */
+	[0x1] = TYPE_KEYED,			/* nothing */
+	[0x2] = 0,				/* nothing */
+	[0x3] = TYPE_KEYED | TYPE_ADDRESSED,	/* 8-bit write */
+	[0x4] = TYPE_KEYED,			/* slow motion */
+	[0x5] = TYPE_KEYED,			/* Supercode */
+	[0x6] = TYPE_KEYED,			/* Megacode */
+	[0x7] = TYPE_KEYED | TYPE_ADDRESSED,	/* execute next if equal */
+	[0x8] = TYPE_KEYED | TYPE_ADDRESSED,	/* 16-bit write */
+	[0x9] = TYPE_KEYED | TYPE_ADDRESSED,	/* execute next if not equal */
+	[0xA] = 0,				/* inline data block */
+	[0xB] = TYPE_KEYED | TYPE_ADDRESSED,	/* slide */
+	[0xC] = 0,				/* nothing */
+	[0xD] = TYPE_KEYED,			/* anchor, rewritten in staging */
+	[0xE] = TYPE_ADDRESSED,			/* 8-bit write, one byte up */
+	[0xF] = TYPE_KEYED | TYPE_ADDRESSED	/* anchor */
+};
+
+/**
+ * xp_code_route - Get the route the Xploder's decrypt routine takes for a code.
+ * @code: code to be checked
+ * @return: the route
  */
-static int keyed_type(const u8 *code)
+enum xp_route xp_code_route(const u8 *code)
 {
-	return (XP_KEYED_TYPES >> (code[0] >> 4)) & 1;
+	int key = code[0] & XP_KEY_MASK;
+	int first = code[0] & (0xFF ^ XP_DEFAULT_OFF);
+
+	if (!(type_flags[xp_code_type(code)] & TYPE_KEYED))
+		return XP_ROUTE_COPY;
+	if (key == 0)
+		return XP_ROUTE_PLAIN;
+	if (key >= XP_KEY_4)
+		return XP_ROUTE_KEYED;
+	if (first == 0x32 || first == 0x82)
+		return XP_ROUTE_SPECIAL32;
+	if (first == 0x33 || first == 0x83)
+		return XP_ROUTE_SPECIAL33;
+	return XP_ROUTE_NO_CIPHER;
+}
+
+/**
+ * xp_code_addressed - Does the code engine use the address of a code?
+ * @code: code to be checked
+ * @return: non-zero if it does
+ */
+int xp_code_addressed(const u8 *code)
+{
+	return (type_flags[xp_code_type(code)] & TYPE_ADDRESSED) != 0;
 }
 
 /*
@@ -119,7 +170,7 @@ int xp_encrypt_code(u8 *code, enum xp_key key)
 	 * code that uses those bits itself has no room for a key, and a code of
 	 * a type the Xploder never encrypts must not carry one either.
 	 */
-	if (!keyed_type(code) || (code[0] & 0x07))
+	if (xp_code_route(code) != XP_ROUTE_PLAIN)
 		return -1;
 
 	switch (key) {
@@ -172,7 +223,7 @@ int xp_decrypt_code(u8 *code, enum xp_key key)
 		return -1;
 
 	/* Codes of a type the Xploder never encrypts are left as they are. */
-	if (!keyed_type(code))
+	if (xp_code_route(code) == XP_ROUTE_COPY)
 		return -1;
 
 	/*
@@ -182,7 +233,7 @@ int xp_decrypt_code(u8 *code, enum xp_key key)
 	 * can afford to do because it never has to encrypt the code again.
 	 */
 	if (key == XP_KEY_AUTO)
-		key = code[0] & 0x07; /* Auto process */
+		key = code[0] & XP_KEY_MASK; /* Auto process */
 
 	switch (key) {
 	case XP_KEY_4:
@@ -326,20 +377,20 @@ int xp_parse_block(const u8 *code, struct xp_block *blk)
 	if (code == NULL || blk == NULL)
 		return -1;
 
-	switch (code[0] & 0xF0) {
-	case 0x50: /* Supercode */
+	switch (xp_code_type(code)) {
+	case 0x5: /* Supercode */
 		blk->kind = XP_BLOCK_SUPER;
 		blk->payload_key = code[4] >> 4;
-		nbytes = ((code[4] & 0x0F) << 8) | code[5];
-		if (nbytes < 1)
-			return -1;
+		blk->declared = ((code[4] & 0x0F) << 8) | code[5];
+		nbytes = blk->declared;
 		break;
-	case 0x60: /* Megacode */
+	case 0x6: /* Megacode */
 		blk->kind = XP_BLOCK_MEGA;
 		blk->payload_key = code[3] & 0x0F;
-		nbytes = ((code[4] << 8) | code[5]) + XP_MEGA_DESC_LEN;
+		blk->declared = (code[4] << 8) | code[5];
+		nbytes = blk->declared + XP_MEGA_DESC_LEN;
 		break;
-	case 0xA0: /* Inline data block */
+	case 0xA: /* Inline data block */
 		/*
 		 * No length and no payload key: the Xploder copies the value
 		 * field plus the six raw bytes of every code below the header
@@ -350,6 +401,7 @@ int xp_parse_block(const u8 *code, struct xp_block *blk)
 		blk->payload_key = 0;
 		blk->known_key = 1;
 		blk->num_lines = 0;
+		blk->declared = -1;
 		return 0;
 	default:
 		return -1;

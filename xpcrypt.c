@@ -183,11 +183,11 @@ static int read_line(char *buf, size_t size, size_t *len, int *ends_line)
 
 /*
  * Set up processing of the payload of a block. Returns the payload position to
- * start at, or -1 if @code is not a block header.
+ * start at, or -1 if @code is not a block header with payload below it.
  */
 static int start_block(const u8 *code, struct xp_block *blk)
 {
-	if (xp_parse_block(code, blk))
+	if (xp_parse_block(code, blk) || !xp_in_payload(blk, 0))
 		return -1;
 
 	if (!blk->known_key)
@@ -234,7 +234,7 @@ static int crypt_code(u8 *code, struct code_stream *stream)
 	}
 
 	if (stream->decrypt) {
-		u8 key_bits = code[0] & 0x07;
+		u8 key_bits = code[0] & XP_KEY_MASK;
 
 		xp_decrypt_code(code, stream->key);
 		/*

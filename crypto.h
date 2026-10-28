@@ -31,6 +31,18 @@ typedef uint8_t u8;
 /* Length of an Xploder code in bytes */
 #define XP_CODE_LEN	6
 
+/*
+ * The first byte of a code: the code type in the high nibble, then the
+ * "switched off by default" bit and the three key bits.
+ */
+#define XP_DEFAULT_OFF	0x08
+#define XP_KEY_MASK	0x07
+
+static inline int xp_code_type(const u8 *code)
+{
+	return code[0] >> 4;
+}
+
 /* Xploder code encryption keys */
 enum xp_key {
 	XP_KEY_AUTO = -1,
@@ -62,6 +74,32 @@ int xp_encrypt_code(u8 *code, enum xp_key key);
  */
 int xp_decrypt_code(u8 *code, enum xp_key key);
 
+/* What the Xploder's decrypt routine does with a code, by its first byte. */
+enum xp_route {
+	XP_ROUTE_COPY,		/* code types 2, A, C, E: read as they are */
+	XP_ROUTE_PLAIN,		/* no key bits: stored in the clear */
+	XP_ROUTE_KEYED,		/* key bits 4 to 7: decrypted with that key */
+	XP_ROUTE_NO_CIPHER,	/* key bits 1 to 3: copied, bits and all */
+	XP_ROUTE_SPECIAL32,	/* 32/82: 'F', 'C', 'D' added to bytes 1 to 3 */
+	XP_ROUTE_SPECIAL33	/* 33/83: bytes 1 to 3 inverted */
+};
+
+/**
+ * xp_code_route - Get the route the Xploder's decrypt routine takes for a code.
+ * @code: code to be checked
+ * @return: the route, which xp_decrypt_code() follows - except for the two
+ *	special routes, which it leaves undone
+ */
+enum xp_route xp_code_route(const u8 *code);
+
+/**
+ * xp_code_addressed - Does the code engine use the address of a code?
+ * @code: code to be checked
+ * @return: non-zero if the engine stores to or compares at the address the
+ *	type of @code names
+ */
+int xp_code_addressed(const u8 *code);
+
 
 /*
  * Number of bytes the breakpoint descriptor of a Megacode occupies in front of
@@ -84,12 +122,16 @@ enum xp_block_kind {
  * @num_lines: number of payload codes that follow the header. Only a Supercode
  *	and a Megacode say how much payload they have; an XP_BLOCK_INLINE
  *	payload runs to the end of the cheat, and this is 0 for one.
+ * @declared: payload bytes the header declares, not counting the breakpoint
+ *	descriptor of a Megacode; -1 for an XP_BLOCK_INLINE, which declares
+ *	none
  */
 struct xp_block {
 	enum xp_block_kind kind;
 	int payload_key;
 	int known_key;
 	int num_lines;
+	int declared;
 };
 
 /**
@@ -101,7 +143,9 @@ struct xp_block {
  * The code types 5 and 6 declare how many bytes of payload follow them. The
  * code type A does not: its payload is raw, unencrypted, and runs to the end of
  * the cheat. Such a block is reported as XP_BLOCK_INLINE, and it is up to the
- * caller to say where the cheat ends.
+ * caller to say where the cheat ends. A Supercode that declares no payload is
+ * a header with no payload codes: num_lines is 0, and the code below it is an
+ * ordinary one.
  */
 int xp_parse_block(const u8 *code, struct xp_block *blk);
 
