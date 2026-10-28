@@ -87,55 +87,57 @@ static u8 hex_digit(char c)
 	return (u8)(tolower((unsigned char)c) - 'a' + 10);
 }
 
+/* What a line of text input is to the converter. */
+enum line_kind {
+	LINE_TEXT,	/* passed through untouched */
+	LINE_CODE,	/* twelve hex digits, and whitespace */
+	LINE_DRESSED	/* a code in "$" or hyphens: text, but worth a warning */
+};
+
 /*
- * Parse the @len bytes at @s into the six bytes of a cheat code. Returns
- * non-zero if they are a code, in which case @code holds it; a line that is
- * not a code is left for the caller to pass through untouched.
+ * Classify the @len bytes at @s, and parse a code line into @code.
  *
  * Whitespace is a separator only: the bytes come from the digits themselves,
- * in order, so where the spaces fall cannot change them. Reading the digits
- * left to right in fixed-width pairs instead - the obvious sscanf() - is what
- * makes that untrue, because each conversion skips whatever whitespace it
- * starts on. "1 23456789 ABC" has the twelve digits a code needs, and used to
- * come out as 01234567 89AB with the last one silently dropped.
+ * in order, so where the spaces fall cannot change them. Old documents dress
+ * codes up as "$60000000 003F" or "00xxxxxx-yyyy". Such a line stays text -
+ * non-code lines pass through untouched - but it would look converted when
+ * nothing happened to it, so it is told apart, in that narrow shape only: one
+ * "$" before the first digit, and hyphens with a hex digit on either side.
  */
-static int parse_code(const char *s, size_t len, u8 *code)
+static enum line_kind classify_line(const char *s, size_t len, u8 *code)
 {
 	char hex[XP_CODE_DIGITS];
-	int digits = 0;
-	int i;
+	int digits = 0, dollar = 0, dressed = 0;
+	size_t i;
 
-	if (s == NULL)
-		return 0;
-
-	while (len--) {
-		/*
-		 * char may be signed, and the ctype functions are only defined
-		 * for the values of an unsigned char and EOF - handing one of
-		 * them a negative value other than EOF is undefined, whatever
-		 * a particular library happens to do with it.
-		 */
-		unsigned char c = (unsigned char)*s;
+	for (i = 0; i < len; i++) {
+		/* The ctype functions take an unsigned char, not a char. */
+		unsigned char c = (unsigned char)s[i];
 
 		if (isxdigit(c)) {
 			if (digits == XP_CODE_DIGITS)
-				return 0;
+				return LINE_TEXT;
 			hex[digits++] = (char)c;
+		} else if (c == '$' && digits == 0 && !dollar) {
+			dollar = dressed = 1;
+		} else if (c == '-' && i > 0 && i + 1 < len &&
+				isxdigit((unsigned char)s[i - 1]) &&
+				isxdigit((unsigned char)s[i + 1])) {
+			dressed = 1;
+		} else if (!isspace(c)) {
+			return LINE_TEXT;
 		}
-		else if (!isspace(c)) {
-			return 0;
-		}
-		s++;
 	}
 
 	if (digits != XP_CODE_DIGITS)
-		return 0;
+		return LINE_TEXT;
+	if (dressed)
+		return LINE_DRESSED;
 
 	for (i = 0; i < XP_CODE_LEN; i++)
 		code[i] = (u8)((hex_digit(hex[i * 2]) << 4) |
 				hex_digit(hex[i * 2 + 1]));
-
-	return 1;
+	return LINE_CODE;
 }
 
 /*
@@ -504,6 +506,7 @@ static int crypt_codes(enum direction dir, enum xp_key key)
 	struct code_stream stream;
 	int begins_line = 1; /* The line before this one ended where it should */
 	int ends_line = 1;
+	unsigned long lineno = 0;
 	int ret;
 
 	/*
@@ -514,13 +517,21 @@ static int crypt_codes(enum direction dir, enum xp_key key)
 	init_code_stream(&stream, dir, key);
 
 	while ((ret = read_line(line, sizeof(line), &len, &ends_line)) == 1) {
-		/* Only a line we have the whole of can be a code. */
-		int whole_line = begins_line && ends_line;
+		enum line_kind kind = LINE_TEXT;
 
+		/* Only a line we have the whole of can be a code. */
+		if (begins_line) {
+			lineno++;
+			if (ends_line)
+				kind = classify_line(line, len, code);
+		}
 		begins_line = ends_line;
 
-		/* Simply output the line if it's not a code. */
-		if (!whole_line || !parse_code(line, len, code)) {
+		if (kind == LINE_DRESSED)
+			fprintf(stderr, "Warning: line %lu looks like a code but "
+				"was left as it is - remove the \"$\" or the "
+				"hyphens to have it processed\n", lineno);
+		if (kind != LINE_CODE) {
 			if (fwrite(line, 1, len, stdout) != len)
 				break;
 			continue;
