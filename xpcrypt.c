@@ -144,9 +144,8 @@ static int parse_code(const char *s, size_t len, u8 *code)
  * the buffer and continues into the following calls.
  *
  * fgets() cannot tell us that: it hands back a chunk that looks exactly like a
- * short line, so a comment 2000 characters long whose tail happened to read as
- * twelve hex digits was decrypted as a code of its own. Nothing that arrives in
- * pieces is a code, and the pieces have to go out as they came in.
+ * short line. Nothing that arrives in pieces is a code, and the pieces have to
+ * go out as they came in.
  *
  * @len is what the caller works from, rather than the terminator this leaves
  * behind for safety's sake: a line may contain a NUL byte, and "%s" would drop
@@ -527,9 +526,8 @@ static int db_richer(const struct db_info *candidate,
  * ascending.
  *
  * This framing rule matters because names are not simply printable strings:
- * bytes 1 through 7 abbreviate words in both game and cheat names. The old
- * research locator rejected an abbreviated early game and resynchronized at a
- * printable suffix, losing 2,144 code rows across the five ROM images.
+ * bytes 1 through 7 abbreviate words in both game and cheat names, so a scan
+ * that wants printable names starts inside one and finds a suffix.
  */
 static int find_database(const u8 *rom, size_t size, size_t *offset)
 {

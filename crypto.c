@@ -451,9 +451,7 @@ int xp_rom_is_plain(const u8 *rom, size_t size)
  * three other tools that agree with it byte for byte.
  *
  * rom_mask() depends on offset bits 0..8 and rom_addend() on bits 0..5, so the
- * keystream repeats every 512 bytes. That period is why xpcrypt used to carry
- * 1 KB of tables and call the transform ECB - it was the shadow of these six
- * operations, not a block size.
+ * keystream repeats every 512 bytes - a period, not a block size.
  */
 static u8 rom_mask(size_t i)
 {
