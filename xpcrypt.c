@@ -181,49 +181,148 @@ static int read_line(char *buf, size_t size, size_t *len, int *ends_line)
 	return 1;
 }
 
+/* Direction of a pass over codes. */
+enum direction {
+	DECRYPT,
+	ENCRYPT
+};
+
 /*
- * Set up processing of the payload of a block. Returns the payload position to
- * start at, or -1 if @code is not a block header with payload below it.
+ * What processing a code turned up. crypt_code() and end_code_stream() return
+ * a set of them, EV(event) for each. Most are codes the cartridge will run
+ * differently from what their text says. The stream itself does no I/O: the
+ * text filter prints a warning per event, and -x counts them and reports each
+ * kind once for the database. The order is the order the warnings come out in.
  */
-static int start_block(const u8 *code, struct xp_block *blk)
-{
-	if (xp_parse_block(code, blk) || !xp_in_payload(blk, 0))
-		return -1;
+enum code_event {
+	EV_UNKNOWN_KEY,		/* block whose payload key we lack */
+	EV_LEFT_CLEAR,		/* code the Xploder doesn't encrypt */
+	EV_DEFAULT_OFF,		/* default-off bit kept, keyed type */
+	EV_DEFAULT_OFF_COPY,	/* ... on a type that takes no key */
+	EV_SPECIAL32,		/* route xpcrypt leaves undone */
+	EV_SPECIAL33,		/* ditto */
+	EV_NO_CIPHER_HEADER,	/* block header with key bits 1-3 */
+	EV_NO_CIPHER,		/* code with key bits 1-3 */
+	EV_EMPTY_BLOCK,		/* block declaring no payload */
+	EV_INLINE,		/* type A: payload to the end */
+	EV_CUT_SHORT,		/* payload ended before its length */
+	NUM_EVENTS
+};
 
-	if (!blk->known_key)
-		fprintf(stderr, "Warning: unknown payload key %i, payload of "
-			"block left as it is\n", blk->payload_key);
-
-	return 0;
-}
+#define EV(event)	(1u << (event))
 
 /* State shared by the text-code reader and one extracted cheat entry. */
 struct code_stream {
 	struct xp_block blk;
 	int index;
-	int decrypt;
+	enum direction dir;
 	enum xp_key key;
+	u8 in[XP_CODE_LEN];		/* the last code row, as it came in */
+	u8 out[XP_CODE_LEN];		/* ... and as it went out */
+	u8 header[XP_CODE_LEN];		/* the current block's header, as it came in */
 };
 
-/* Initialize a code stream. @decrypt selects the direction of the pass. */
-static void init_code_stream(struct code_stream *stream, int decrypt,
+static void init_code_stream(struct code_stream *stream, enum direction dir,
 		enum xp_key key)
 {
 	stream->index = -1;
-	stream->decrypt = decrypt;
+	stream->dir = dir;
 	stream->key = key;
 }
 
-/*
- * Process one code in a stream. Returns non-zero when the code opened a type A
- * block: its payload has no declared length, so every code that follows in the
- * stream is consumed as payload.
- */
-static int crypt_code(u8 *code, struct code_stream *stream)
+/* The last code as the Xploder stores it, and as xpcrypt shows it. */
+static const u8 *stored_code(const struct code_stream *stream)
 {
+	return stream->dir == DECRYPT ? stream->in : stream->out;
+}
+
+static const u8 *plain_code(const struct code_stream *stream)
+{
+	return stream->dir == DECRYPT ? stream->out : stream->in;
+}
+
+/*
+ * Start a block if the last code is a header with payload rows below it.
+ * Returns the events that says, and sets @started.
+ */
+static unsigned start_block(struct code_stream *stream, int *started)
+{
+	unsigned events = 0;
+
+	*started = 0;
+	if (xp_parse_block(plain_code(stream), &stream->blk))
+		return 0;
+	if (stream->blk.declared == 0)
+		events |= EV(EV_EMPTY_BLOCK);
+	if (!xp_in_payload(&stream->blk, 0))
+		return events;
+
+	stream->index = 0;
+	memcpy(stream->header, stream->in, XP_CODE_LEN);
+	*started = 1;
+	if (!stream->blk.known_key)
+		events |= EV(EV_UNKNOWN_KEY);
+	if (stream->blk.kind == XP_BLOCK_INLINE)
+		events |= EV(EV_INLINE);
+	return events;
+}
+
+/*
+ * What the cartridge will make of @stored, the code as the Xploder gets it.
+ */
+static unsigned check_code(const struct code_stream *stream, const u8 *stored,
+		int header)
+{
+	enum xp_route route = xp_code_route(stored);
+	unsigned events = 0;
+
+	/*
+	 * The Xploder clears the default-off bit along with the key, so it
+	 * never reaches the code engine - except on a code stored without a
+	 * key: the copy route leaves it, and the engine, which masks only the
+	 * type nibble off, adds 0x08000000 to the address. Encrypting the code
+	 * with any key is what clears it, for a type that takes one.
+	 */
+	if ((stored[0] & (XP_DEFAULT_OFF | XP_KEY_MASK)) == XP_DEFAULT_OFF &&
+			xp_code_addressed(stored))
+		events |= route == XP_ROUTE_COPY ? EV(EV_DEFAULT_OFF_COPY) :
+			EV(EV_DEFAULT_OFF);
+
+	/*
+	 * Key bits 1 to 3 select no cipher: the Xploder copies the code as
+	 * stored, and the engine reads the bits as part of the address - or
+	 * takes a block header's size as stored. 32/82 and 33/83 have routes
+	 * of their own instead, which xpcrypt leaves undone. A code we encrypt
+	 * never carries such bits; one we could not is reported as such.
+	 */
+	if (stream->dir == DECRYPT) {
+		if (route == XP_ROUTE_SPECIAL32)
+			events |= EV(EV_SPECIAL32);
+		else if (route == XP_ROUTE_SPECIAL33)
+			events |= EV(EV_SPECIAL33);
+		else if (route == XP_ROUTE_NO_CIPHER)
+			events |= header ? EV(EV_NO_CIPHER_HEADER) : EV(EV_NO_CIPHER);
+	}
+
+	return events;
+}
+
+/*
+ * Process one code in a stream, in place. Returns the events it turned up.
+ *
+ * A block starts on the type a header is stored with, before anything is
+ * decrypted, and takes its size and payload key from the decrypted header -
+ * which is how the Xploder stages it. Key bits 1 to 3 select no cipher, so a
+ * header carrying them is taken as stored, and the codes below it are payload.
+ */
+static unsigned crypt_code(u8 *code, struct code_stream *stream)
+{
+	unsigned events = 0;
+	int started;
+
 	if (stream->index >= 0) {
 		/* This row is raw block payload, not a code of its own. */
-		if (stream->decrypt)
+		if (stream->dir == DECRYPT)
 			xp_decrypt_block_line(code, &stream->blk, stream->index);
 		else
 			xp_encrypt_block_line(code, &stream->blk, stream->index);
@@ -233,39 +332,159 @@ static int crypt_code(u8 *code, struct code_stream *stream)
 		return 0;
 	}
 
-	if (stream->decrypt) {
-		u8 key_bits = code[0] & XP_KEY_MASK;
-
+	memcpy(stream->in, code, XP_CODE_LEN);
+	if (stream->dir == DECRYPT)
 		xp_decrypt_code(code, stream->key);
-		/*
-		 * The Xploder tells a block header by the type nibble it is
-		 * stored with, before decrypting anything, and takes the size and
-		 * payload key from whatever the decryption leaves. The key bits 1
-		 * to 3 select no cipher, so a header that carries one is used just
-		 * as it is stored - size field and all - and the codes below it
-		 * are payload. That is a header nobody meant to write, which is
-		 * worth a warning, but the codes below it are payload on the
-		 * cartridge, and payload is never to be decrypted as code.
-		 */
-		stream->index = start_block(code, &stream->blk);
-		if (stream->index >= 0 && stream->blk.kind != XP_BLOCK_INLINE &&
-				key_bits != 0 && key_bits < XP_KEY_4)
-			fprintf(stderr, "Warning: block header %02X%02X%02X%02X "
-				"%02X%02X has key bits %i, which select no "
-				"cipher - the Xploder takes its size as stored\n",
-				code[0], code[1], code[2], code[3], code[4],
-				code[5], key_bits);
-	} else {
-		/* The header has to be parsed before it is encrypted. */
-		stream->index = start_block(code, &stream->blk);
-		if (xp_encrypt_code(code, stream->key))
-			fprintf(stderr, "Warning: the Xploder doesn't encrypt "
-				"code %02X%02X%02X%02X %02X%02X, left as it "
-				"is\n", code[0], code[1], code[2], code[3],
-				code[4], code[5]);
-	}
+	else if (xp_encrypt_code(code, stream->key))
+		events |= EV(EV_LEFT_CLEAR);
+	memcpy(stream->out, code, XP_CODE_LEN);
 
-	return stream->index >= 0 && stream->blk.kind == XP_BLOCK_INLINE;
+	events |= start_block(stream, &started);
+	events |= check_code(stream, stored_code(stream), started);
+	return events;
+}
+
+/*
+ * End a code stream, at the end of the input or of a cheat. A block whose
+ * payload has not ended by then was cut short.
+ */
+static unsigned end_code_stream(const struct code_stream *stream)
+{
+	return stream->index >= 0 && stream->blk.kind != XP_BLOCK_INLINE ?
+		EV(EV_CUT_SHORT) : 0;
+}
+
+#define CODE_FMT	"%02X%02X%02X%02X %02X%02X"
+#define CODE_ARGS(c)	(c)[0], (c)[1], (c)[2], (c)[3], (c)[4], (c)[5]
+
+/* Say what the last code of @stream turned up, one warning per event. */
+static void print_events(const struct code_stream *stream, unsigned events)
+{
+	const u8 *stored = stored_code(stream);
+
+	if (events & EV(EV_UNKNOWN_KEY))
+		fprintf(stderr, "Warning: unknown payload key %i, payload of "
+			"block left as it is\n", stream->blk.payload_key);
+	if (events & EV(EV_LEFT_CLEAR))
+		fprintf(stderr, "Warning: the Xploder doesn't encrypt code "
+			CODE_FMT ", left as it is\n", CODE_ARGS(stream->out));
+	if (events & EV(EV_DEFAULT_OFF))
+		fprintf(stderr, "Warning: " CODE_FMT " is switched off by "
+			"default but carries no key, so the Xploder applies it "
+			"0x08000000 away from its address - encrypting it with "
+			"any key clears the bit\n", CODE_ARGS(stored));
+	if (events & EV(EV_DEFAULT_OFF_COPY))
+		fprintf(stderr, "Warning: " CODE_FMT " is switched off by "
+			"default but carries no key, so the Xploder applies it "
+			"0x08000000 away from its address\n", CODE_ARGS(stored));
+	if (events & EV(EV_SPECIAL32))
+		fprintf(stderr, "Warning: " CODE_FMT " takes the Xploder's "
+			"Special32 route, which xpcrypt does not implement\n",
+			CODE_ARGS(stored));
+	if (events & EV(EV_SPECIAL33))
+		fprintf(stderr, "Warning: " CODE_FMT " takes the Xploder's "
+			"Special33 route, which xpcrypt does not implement\n",
+			CODE_ARGS(stored));
+	if (events & EV(EV_NO_CIPHER_HEADER))
+		fprintf(stderr, "Warning: " CODE_FMT " has key bits %i, which "
+			"select no cipher - the Xploder takes this block header as "
+			"stored, size and all\n", CODE_ARGS(stored),
+			stored[0] & XP_KEY_MASK);
+	if (events & EV(EV_NO_CIPHER))
+		fprintf(stderr, "Warning: " CODE_FMT " has key bits %i, which "
+			"select no cipher - the Xploder reads them as part of the "
+			"address\n", CODE_ARGS(stored), stored[0] & XP_KEY_MASK);
+	if (events & EV(EV_EMPTY_BLOCK))
+		fprintf(stderr, "Warning: " CODE_FMT " declares an empty "
+			"payload, which hangs the Xploder's code engine\n",
+			CODE_ARGS(plain_code(stream)));
+	if (events & EV(EV_INLINE))
+		fprintf(stderr, "Warning: code type A has no payload length, "
+			"all following codes are treated as its payload\n");
+	if (events & EV(EV_CUT_SHORT))
+		fprintf(stderr, "Warning: " CODE_FMT " ends after %i of the %i "
+			"payload codes it declares\n", CODE_ARGS(stream->header),
+			stream->index, stream->blk.num_lines);
+}
+
+/*
+ * What -x says about a whole database, once per kind of event: the rest of
+ * the sentence after the count, for one and for several. An event without an
+ * entry is not reported there: a cheat ends every type A block, and -x only
+ * decrypts.
+ */
+static const struct {
+	const char *one;
+	const char *many;
+} summaries[NUM_EVENTS] = {
+	[EV_UNKNOWN_KEY] = {
+	  "block in this database has an unknown payload key, so its payload "
+	  "is left as it is",
+	  "blocks in this database have an unknown payload key, so their "
+	  "payload is left as it is" },
+	[EV_DEFAULT_OFF] = {
+	  "code in this database is switched off by default but carries no "
+	  "key, so the Xploder applies it 0x08000000 away from its address - "
+	  "encrypting it with any key clears the bit",
+	  "codes in this database are switched off by default but carry no "
+	  "key, so the Xploder applies them 0x08000000 away from their address "
+	  "- encrypting them with any key clears the bit" },
+	[EV_DEFAULT_OFF_COPY] = {
+	  "code in this database is switched off by default but carries no "
+	  "key, so the Xploder applies it 0x08000000 away from its address",
+	  "codes in this database are switched off by default but carry no "
+	  "key, so the Xploder applies them 0x08000000 away from their "
+	  "address" },
+	[EV_SPECIAL32] = {
+	  "code in this database takes the Xploder's Special32 route, which "
+	  "xpcrypt does not implement",
+	  "codes in this database take the Xploder's Special32 route, which "
+	  "xpcrypt does not implement" },
+	[EV_SPECIAL33] = {
+	  "code in this database takes the Xploder's Special33 route, which "
+	  "xpcrypt does not implement",
+	  "codes in this database take the Xploder's Special33 route, which "
+	  "xpcrypt does not implement" },
+	[EV_NO_CIPHER_HEADER] = {
+	  "block header in this database has key bits that select no cipher, "
+	  "so the Xploder takes it as stored, size and all",
+	  "block headers in this database have key bits that select no cipher, "
+	  "so the Xploder takes them as stored, size and all" },
+	[EV_NO_CIPHER] = {
+	  "code in this database has key bits that select no cipher, which "
+	  "the Xploder reads as part of the address",
+	  "codes in this database have key bits that select no cipher, which "
+	  "the Xploder reads as part of the address" },
+	[EV_EMPTY_BLOCK] = {
+	  "block in this database declares an empty payload, which hangs the "
+	  "Xploder's code engine",
+	  "blocks in this database declare an empty payload, which hangs the "
+	  "Xploder's code engine" },
+	[EV_CUT_SHORT] = {
+	  "block in this database ends before the payload it declares",
+	  "blocks in this database end before the payload they declare" }
+};
+
+/* Count each event of @events in @counts. */
+static void count_events(unsigned long *counts, unsigned events)
+{
+	int i;
+
+	for (i = 0; i < NUM_EVENTS; i++)
+		if (events & EV(i))
+			counts[i]++;
+}
+
+/* Say once per kind what a whole database turned up. */
+static void print_summaries(const unsigned long *counts)
+{
+	int i;
+
+	for (i = 0; i < NUM_EVENTS; i++)
+		if (counts[i] && summaries[i].one != NULL)
+			fprintf(stderr, "Warning: %lu %s\n", counts[i],
+				counts[i] == 1 ? summaries[i].one :
+				summaries[i].many);
 }
 
 static int print_code(const u8 *code)
@@ -277,7 +496,7 @@ static int print_code(const u8 *code)
 /*
  * Decrypt or encrypt Xploder codes.
  */
-static int crypt_codes(int decrypt, enum xp_key key)
+static int crypt_codes(enum direction dir, enum xp_key key)
 {
 	char line[2048];
 	size_t len = 0;
@@ -292,7 +511,7 @@ static int crypt_codes(int decrypt, enum xp_key key)
 	 * and write them to stdout.
 	 */
 	setbuf(stdin, NULL);
-	init_code_stream(&stream, decrypt, key);
+	init_code_stream(&stream, dir, key);
 
 	while ((ret = read_line(line, sizeof(line), &len, &ends_line)) == 1) {
 		/* Only a line we have the whole of can be a code. */
@@ -314,14 +533,13 @@ static int crypt_codes(int decrypt, enum xp_key key)
 		 * unlike the ROM database, whose records end where the cheat
 		 * does.
 		 */
-		if (crypt_code(code, &stream))
-			fprintf(stderr, "Warning: code type A has no payload "
-				"length, all following codes are treated as its "
-				"payload\n");
+		print_events(&stream, crypt_code(code, &stream));
 
 		if (print_code(code))
 			break;
 	}
+
+	print_events(&stream, end_code_stream(&stream));
 
 	/*
 	 * stdout is buffered, so a write that fails may not fail until the
@@ -726,8 +944,11 @@ static int print_db_name(const u8 *name, size_t len, int quoted)
 	return putchar('\n') == EOF ? -1 : 0;
 }
 
-/* Print one already-located database, decrypting each cheat independently. */
-static int print_database(const u8 *rom, size_t size)
+/*
+ * Print one already-located database, decrypting each cheat independently,
+ * and count the events of its codes into @counts.
+ */
+static int print_database(const u8 *rom, size_t size, unsigned long *counts)
 {
 	struct db_cursor cursor;
 	struct db_record record;
@@ -744,16 +965,18 @@ static int print_database(const u8 *rom, size_t size)
 		if (record.cheat_name != NULL && print_db_name(record.cheat_name,
 				record.cheat_name_len, 0))
 			return -1;
-		init_code_stream(&stream, 1, XP_KEY_AUTO);
+		init_code_stream(&stream, DECRYPT, XP_KEY_AUTO);
 		for (line = 0; line < record.nlines; line++) {
 			u8 code[XP_CODE_LEN];
 
 			memcpy(code, record.codes + line * XP_CODE_LEN,
 				XP_CODE_LEN);
-			crypt_code(code, &stream);
+			count_events(counts, crypt_code(code, &stream));
 			if (print_code(code))
 				return -1;
 		}
+		/* The cheat is where a block ends on the cartridge. */
+		count_events(counts, end_code_stream(&stream));
 		if (record.last_in_game && printf("\n//=====\n\n") < 0)
 			return -1;
 	}
@@ -852,6 +1075,7 @@ static int extract_codes(const char *infile)
 	u8 *db = NULL;
 	const u8 *chain;
 	size_t size, len;
+	unsigned long counts[NUM_EVENTS] = { 0 };
 	int ret = -1;
 
 	if (read_rom(infile, &rom, &size))
@@ -864,11 +1088,12 @@ static int extract_codes(const char *infile)
 
 	if (locate_database(rom, size, &chain, &len, &db))
 		goto out;
-	if (print_database(chain, len) || fflush(stdout) != 0 ||
+	if (print_database(chain, len, counts) || fflush(stdout) != 0 ||
 			ferror(stdout)) {
 		fprintf(stderr, "Error: could not write extracted codes\n");
 		goto out;
 	}
+	print_summaries(counts);
 
 	ret = 0;
 out:
@@ -1003,7 +1228,8 @@ int main(int argc, char *argv[])
 				argv[optind]);
 			return EXIT_FAILURE;
 		}
-		if (crypt_codes(mode == MODE_DECRYPT_CODES, key))
+		if (crypt_codes(mode == MODE_DECRYPT_CODES ? DECRYPT : ENCRYPT,
+				key))
 			return EXIT_FAILURE;
 		break;
 	case MODE_EXTRACT_CODES:

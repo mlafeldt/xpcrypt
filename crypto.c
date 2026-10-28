@@ -42,10 +42,11 @@
  *     the firmware writes a row of zeros;
  *   - a Supercode header declaring no payload is treated as an ordinary code,
  *     because the line below it is one; the cartridge stages the empty block
- *     and its engine then runs away. A Megacode cannot say the same thing: its
- *     length counts the bytes after the breakpoint descriptor, so a zero there
- *     still means the two codes the descriptor occupies, and the cartridge's
- *     stager reads those two unconditionally - as this does;
+ *     and its engine then runs away, which the CLI warns about. A Megacode
+ *     cannot say the same thing: its length counts the bytes after the
+ *     breakpoint descriptor, so a zero there still means the two codes the
+ *     descriptor occupies, and the cartridge's stager reads those two
+ *     unconditionally - as this does;
  *   - a code type A takes every code that follows to the end of the input,
  *     because a stream of codes has no cheat-entry boundary in it, where the
  *     cartridge stops at the end of the cheat;
