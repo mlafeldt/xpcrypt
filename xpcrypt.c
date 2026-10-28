@@ -360,6 +360,7 @@ struct db_info {
 	size_t lines;
 };
 
+/* One cheat, or a game without any: then cheat_name is NULL. */
 struct db_record {
 	const u8 *game_name;
 	size_t game_name_len;
@@ -451,6 +452,11 @@ static int db_read_name(struct db_cursor *cursor, const u8 **name, size_t *len,
  * Read and validate one cheat record. Returns 1 for a record, 0 for a clean
  * end, and -1 for a malformed chain. Every size check is made before the
  * corresponding read.
+ *
+ * A game that declares zero cheats - a name, a count of zero, then the next
+ * game - comes back as a record of its own, with no cheat name and no codes.
+ * FCD ships them on purpose, as placeholders and as headings: the German FX
+ * database opens with five, a legend for the abbreviations of its cheat names.
  */
 static int db_cursor_next(struct db_cursor *cursor, struct db_record *record)
 {
@@ -459,33 +465,28 @@ static int db_cursor_next(struct db_cursor *cursor, struct db_record *record)
 	if (cursor->rom == NULL || cursor->pos > cursor->size)
 		return -1;
 
+	memset(record, 0, sizeof(*record));
 	record->first_in_game = cursor->cheats_left == 0;
 	if (record->first_in_game) {
 		u8 ncheats;
 
-		/*
-		 * Skip any game that declares zero cheats: a name, a count of
-		 * zero, then the next game. Such a game holds no cheat record,
-		 * so pass over it rather than ending the chain on it. They are
-		 * rare (Xplorer 2.005 has one, "Moto Racer 2"), which is why a
-		 * zero count once read as a malformed chain and discarded the
-		 * whole database.
-		 */
-		do {
-			if (db_is_term(cursor->rom, cursor->size, cursor->pos))
-				return cursor->game_name == NULL ? -1 : 0;
-			if (db_read_name(cursor, &cursor->game_name,
-					&cursor->game_name_len, &ncheats))
-				return -1;
-		} while (ncheats == 0);
+		if (db_is_term(cursor->rom, cursor->size, cursor->pos))
+			return 0;
+		if (db_read_name(cursor, &cursor->game_name,
+				&cursor->game_name_len, &ncheats))
+			return -1;
 		cursor->cheats_left = ncheats;
+	}
+	record->game_name = cursor->game_name;
+	record->game_name_len = cursor->game_name_len;
+	if (cursor->cheats_left == 0) {
+		record->last_in_game = 1;
+		return 1;
 	}
 
 	if (db_read_name(cursor, &record->cheat_name, &record->cheat_name_len,
 			&nlines))
 		return -1;
-	record->game_name = cursor->game_name;
-	record->game_name_len = cursor->game_name_len;
 	if ((size_t)nlines > (cursor->size - cursor->pos) / XP_CODE_LEN)
 		return -1;
 	record->codes = cursor->rom + cursor->pos;
@@ -498,8 +499,10 @@ static int db_cursor_next(struct db_cursor *cursor, struct db_record *record)
 }
 
 /*
- * Walk the whole record chain at @rom and count it into @info. Returns 0 if
- * the chain ends cleanly at its terminator, -1 if it is malformed anywhere.
+ * Walk the whole record chain at @rom and count it into @info: the games with
+ * cheats, their cheats, and their code lines. Returns 0 if the chain ends
+ * cleanly at its terminator and holds at least one cheat, -1 if it does not.
+ * A chain of nothing but empty games is not a database.
  */
 static int db_scan(const u8 *rom, size_t size, struct db_info *info)
 {
@@ -510,13 +513,15 @@ static int db_scan(const u8 *rom, size_t size, struct db_info *info)
 	info->games = info->cheats = info->lines = 0;
 	init_db_cursor(&cursor, rom, size);
 	while ((ret = db_cursor_next(&cursor, &record)) == 1) {
+		if (record.cheat_name == NULL)
+			continue;
 		if (record.first_in_game)
 			info->games++;
 		info->cheats++;
 		info->lines += record.nlines;
 	}
 
-	return ret < 0 ? -1 : 0;
+	return ret < 0 || info->cheats == 0 ? -1 : 0;
 }
 
 static int db_richer(const struct db_info *candidate,
@@ -536,8 +541,9 @@ static int db_richer(const struct db_info *candidate,
  * at offset zero or where its previous four bytes are 0xFF. For every such
  * offset:
  *
- *   1. db_cursor_next() must parse at least one game and all of its declared
- *      cheats and six-byte code rows without running off the image;
+ *   1. db_cursor_next() must parse at least one game with cheats, and all
+ *      of its declared cheats and six-byte code rows, without running off
+ *      the image;
  *   2. every following game must parse the same way; and
  *   3. the chain must end cleanly at its own four-0xFF terminator.
  *
@@ -678,8 +684,7 @@ static int fx_database(const u8 *rom, size_t size, u8 **db, size_t *db_size)
 	if (buf == NULL)
 		return -1;
 	if (lzw_unpack(&rom[off + 8], packed, buf, unpacked, &n) ||
-			n != unpacked || db_scan(buf, n, &info) ||
-			info.games == 0) {
+			n != unpacked || db_scan(buf, n, &info)) {
 		free(buf);
 		return -1;
 	}
@@ -725,7 +730,8 @@ static int print_database(const u8 *rom, size_t size)
 		if (record.first_in_game && print_db_name(record.game_name,
 				record.game_name_len, 1))
 			return -1;
-		if (print_db_name(record.cheat_name, record.cheat_name_len, 0))
+		if (record.cheat_name != NULL && print_db_name(record.cheat_name,
+				record.cheat_name_len, 0))
 			return -1;
 		init_code_stream(&stream, 1, XP_KEY_AUTO);
 		for (line = 0; line < record.nlines; line++) {
