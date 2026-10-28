@@ -432,12 +432,12 @@ callouts. The script and C findings were recorded but not fixed.
     That is evidence for `N64.md`'s code-cipher finding that does not rest on
     hammerhead.
 * **The C source: fixed in 1.2** (`TODO.md`, "Done in 1.2"):
-  * FX `-x` (`1f11e7d`);
-  * the empty-only-chain case, with empty games now printed (`ca3c019`);
-  * the header guard, which now follows the cart (`95b85ec`);
-  * the warnings for cart behaviour (`87bc2f1`);
-  * the brick check on `-r` (`ab14e2e`);
-  * the release (`3fdeb95`), after a code-quality pass (`359ce8d`..`dd55b71`).
+  * FX `-x` (`87362e3`);
+  * the empty-only-chain case, with empty games now printed (`72384f1`);
+  * the header guard, which now follows the cart (`58e825e`);
+  * the warnings for cart behaviour (`b500462`, `9451311`);
+  * the brick check on `-r` (`bc3cadc`);
+  * the release (`d86ba7c`).
 
   `warn_test.py` and the extended `extract_test.py`, `fuzz_test.py` and
   `oracle_test.py` hold them.

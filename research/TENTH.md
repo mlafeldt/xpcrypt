@@ -164,7 +164,7 @@ one in the reference reader:
 * **`7070614`, `xpcrypt.c` `db_cursor_next()`.** Instead of `return -1` on
   `ncheats == 0`, it read past the game to the next one, so an empty game was
   skipped: not counted and not printed.
-* **`ca3c019` (1.2), the same function.** An empty game is now a record of its
+* **`72384f1` (1.2), the same function.** An empty game is now a record of its
   own, with no cheat name and no codes. `-x` prints it as a game name with nothing
   under it. That matters beyond 2.005: the German FX database opens with five
   empty games that make up a legend for its abbreviations. `find_database()` also

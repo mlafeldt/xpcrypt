@@ -23,39 +23,31 @@ The plan the ninth pass of `AUDIT.md` produced, as it landed on `main`:
 
 * **`8f9b90b`** - `xp_crypto.c`/`.h` became `crypto.c`/`.h`. The identifiers keep
   their `xp_`.
-* **`1f11e7d`** - `-x` reads the Xplorer FX: the module's pointer at
+* **`5ded6f1`** - the comments keep invariants, not history.
+* **`87362e3`** - `-x` reads the Xplorer FX: the module's pointer at
   `*(rom + 0x7C) + 0xB8`, the container, and Nelson's 14-bit LZW in `lzw.c`
   (`FINDINGS.md` §6.3). V2 still goes through the framing scan, unchanged.
-  `extract_test.py` has an FX fixture, four damaged containers and the four FX
-  images; `fuzz_test.py` has two FX families.
-* **`ca3c019`** - empty games are printed, and a chain needs at least one cheat to
+  `rom_module()` tells the generations apart, and `locate_database()` owns the
+  FX-vs-V2 choice. `extract_test.py` has an FX fixture, four damaged containers
+  and the four FX images; `fuzz_test.py` has two FX families.
+* **`72384f1`** - empty games are printed, and a chain needs at least one cheat to
   count as a database (`TENTH.md` §3).
-* **`95b85ec`** - a block starts on the header's *stored* type, as on the cartridge.
+* **`58e825e`** - a block starts on the header's *stored* type, as on the cartridge.
   Key bits 1-3 keep the header as stored, size and all, with a warning
   (`FINDINGS.md` §6.5). `oracle_test.py` asserts the cart's side.
-* **`87bc2f1`** - warnings for codes the cartridge runs differently: the default-off
-  bit on a keyless code, key bits that select no cipher (or the Special32/33 routes),
-  empty blocks, and blocks cut short. `-x` gives one line per kind for the whole
-  database.
-* **`ab14e2e`** - `-r` models the anti-tamper check on the plaintext side and warns,
+* **`b500462`** - the first code byte is described in one place: `xp_code_route()`,
+  a table of the sixteen types, and the declared length from `xp_parse_block()`.
+* **`9451311`** - warnings for codes the cartridge runs differently: the default-off
+  bit on a keyless code (the slide code, type B, among the addressed types), key
+  bits that select no cipher (or the Special32/33 routes), empty blocks, and blocks
+  cut short. The stream returns them as events and does no I/O: the text filter
+  prints them, and `-x` gives one line per kind for the whole database, an unknown
+  payload key among them.
+* **`bc3cadc`** - `-r` models the anti-tamper check on the plaintext side and warns,
   stock Pro 2.14 included. It still writes the output.
-* **`047a8fb`** - a code line dressed in `$` or hyphens gets a warning and still
+* **`8c08daf`** - a code line dressed in `$` or hyphens gets a warning and still
   passes through untouched.
-* **`42a0ab8`** - the slide code (type B) counts among the addressed types for the
-  default-off warning; the first cut left it out.
-* **`359ce8d`..`dd55b71`** - a code-quality pass before the release:
-  * the first code byte is described in one place: `xp_code_route()`, a table of
-    the sixteen types, and the declared length from `xp_parse_block()`;
-  * the stream returns warnings as events and does no I/O. The text filter prints
-    them, and `-x` counts them, so an unknown payload key, a header's key bits
-    and the default-off hint now get their summary lines too;
-  * `rom_module()` tells the generations apart once, and the copyright check is
-    a table;
-  * the database reader takes a chain rather than a start offset, and
-    `locate_database()` owns the FX-vs-V2 choice;
-  * one pass classifies a text line;
-  * the comments keep invariants, not history.
-* **`3fdeb95`** - release 1.2, with the README history and a Warnings section.
+* **`d86ba7c`** - release 1.2, with the README history and a Warnings section.
 
 `warn_test.py` (`make warnings`) holds every warning to the finding it rests on, both
 on the stream and in the `-x` counts per database.

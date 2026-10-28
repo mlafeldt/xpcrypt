@@ -254,7 +254,7 @@ def test_unkeyed_headers():
     The jump table has no route for a low nibble of 1-3, so the firmware copies
     such a header and stages it by its *stored* type nibble - both stagers test
     byte 0 & 0xF0 before decrypting (0x1ACCEC, 0x1AD08C in xteng.dec) - with its
-    size and payload key taken verbatim.  xpcrypt does the same since 95b85ec
+    size and payload key taken verbatim.  xpcrypt does the same since 58e825e
     (it used to start no block, FINDINGS.md 6.5): the header comes back as it
     is, the rows below are payload under its payload key, and a warning names
     the key bits.  No shipped header is stored this way.  `differ` counts the

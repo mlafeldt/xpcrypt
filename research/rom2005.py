@@ -19,7 +19,7 @@ is not corruption: the record is well formed and the chain continues correctly
 straight after it.  Both readers now accept it (`7070614` in the C, `6f42321`
 in db2.py), and this file holds them to that: `db2.find_db()` has to find the
 chain, `xpcrypt -x` has to print all of it - 234 game records, the empty one
-printed as a game with nothing under it (`ca3c019`), 1,668 cheats and 2,365
+printed as a game with nothing under it (`72384f1`), 1,668 cheats and 2,365
 code lines - and a walk that still rejects the zero has to fail on that one
 record and nowhere else.
 

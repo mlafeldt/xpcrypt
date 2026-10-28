@@ -871,7 +871,7 @@ with something, and initials are as good as any other four bytes.
    line in the three databases is a type 5/6 payload row, and the cart has no encrypt
    side at all. If ported, mind that the firmware leaves `dst[0]` untouched here.
 5. ~~**A header whose key bits select no cipher - xpcrypt and the cart disagree.**~~
-   **Settled in 1.2 (`95b85ec`): xpcrypt follows the cart.** `7d15818` made xpcrypt
+   **Settled in 1.2 (`58e825e`): xpcrypt follows the cart.** `7d15818` made xpcrypt
    start a block only when the header's key bits are clear after decryption: either it
    decrypted, or it never carried a key. The motivation was that `51123456 6006`
    turned the following line into `4476D366 AA22`, and that a header reading `6FFF`
