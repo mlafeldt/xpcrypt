@@ -43,7 +43,7 @@ The plan the ninth pass of `AUDIT.md` produced, as it landed on `main`:
   passes through untouched.
 * **`42a0ab8`** - the slide code (type B) counts among the addressed types for the
   default-off warning; the first cut left it out.
-* **`359ce8d`..`ec2bc60`** - a code-quality pass before the release:
+* **`359ce8d`..`dd55b71`** - a code-quality pass before the release:
   * the first code byte is described in one place: `xp_code_route()`, a table of
     the sixteen types, and the declared length from `xp_parse_block()`;
   * the stream returns warnings as events and does no I/O. The text filter prints
@@ -55,7 +55,7 @@ The plan the ninth pass of `AUDIT.md` produced, as it landed on `main`:
     `locate_database()` owns the FX-vs-V2 choice;
   * one pass classifies a text line;
   * the comments keep invariants, not history.
-* **`e8daf3e`** - release 1.2, with the README history and a Warnings section.
+* **`3fdeb95`** - release 1.2, with the README history and a Warnings section.
 
 `warn_test.py` (`make warnings`) holds every warning to the finding it rests on, both
 on the stream and in the `-x` counts per database.
